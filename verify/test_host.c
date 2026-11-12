@@ -19,10 +19,11 @@ enum {
     NAME = 20,
     BACK = 8,
     MAX_ROWS = 96,
-    WARM = 8,
-    ITER_MEM = 64,
-    ITER_STR = 256,
-    ITER_FMT = 128
+    WARM = 16,
+    ITER_MEM = 256,
+    ITER_STR = 1024,
+    ITER_FMT = 128,
+    SAMPLES = 21          /* median of this many timed runs */
 };
 
 /* ANSI */
@@ -85,6 +86,18 @@ static uint64_t now_ns(void)
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static int cmp_u64(const void *a, const void *b)
+{
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x > y) - (x < y);
+}
+
+static uint64_t median_u64(uint64_t *v, int n)
+{
+    qsort(v, (size_t)n, sizeof *v, cmp_u64);
+    return v[n / 2];
 }
 
 struct row {
@@ -237,8 +250,8 @@ static void print_report(void)
         printf("%srt host oracle%s — one table per accessible backend\n", C_BOLD, C_RESET);
     else
         printf("rt host oracle — one table per accessible backend\n");
-    printf("%slegend%s: coef = libc_ns/rt_ns · 1.00 parity · 2.00 = rt 2× faster\n",
-           g_color ? C_DIM : "", g_color ? C_RESET : "");
+    printf("%slegend%s: coef = libc_ns/rt_ns · median of %d samples · 1.00 = parity\n",
+           g_color ? C_DIM : "", g_color ? C_RESET : "", SAMPLES);
 
     for (i = 0; i < g_nrows; i++) {
         int found = 0;
@@ -297,21 +310,28 @@ static void bench_memcpy(struct row *r, copy_fn rt_fn)
         }
     }
 
-    for (k = 0; k < WARM; k++) {
-        memcpy(dst, src, N);
-        rt_fn(dst, src, N);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            memcpy(dst, src, N);
+            rt_fn(dst, src, N);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                memcpy(dst, src, N);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                rt_fn(dst, src, N);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        memcpy(dst, src, N);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        rt_fn(dst, src, N);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
 }
 
 static void bench_memmove(struct row *r, copy_fn rt_fn)
@@ -342,21 +362,28 @@ static void bench_memmove(struct row *r, copy_fn rt_fn)
         }
     }
 
-    for (k = 0; k < WARM; k++) {
-        memmove(base + 16, base, N);
-        rt_fn(base + 16, base, N);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            memmove(base + 16, base, N);
+            rt_fn(base + 16, base, N);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                memmove(base + 16, base, N);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                rt_fn(base + 16, base, N);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        memmove(base + 16, base, N);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        rt_fn(base + 16, base, N);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
 }
 
 static void bench_memset(struct row *r, set_fn rt_fn)
@@ -384,21 +411,28 @@ static void bench_memset(struct row *r, set_fn rt_fn)
         }
     }
 
-    for (k = 0; k < WARM; k++) {
-        memset(dst, 0xA5, N);
-        rt_fn(dst, 0xA5, N);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            memset(dst, 0xA5, N);
+            rt_fn(dst, 0xA5, N);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                memset(dst, 0xA5, N);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                rt_fn(dst, 0xA5, N);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        memset(dst, 0xA5, N);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        rt_fn(dst, 0xA5, N);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
 }
 
 static void bench_memcmp(struct row *r, cmp_fn rt_fn)
@@ -418,21 +452,28 @@ static void bench_memcmp(struct row *r, cmp_fn rt_fn)
     b[N / 2] ^= 1;
     row_add(r, sign_eq(rt_fn(a, b, N), memcmp(a, b, N)));
 
-    for (k = 0; k < WARM; k++) {
-        sink += memcmp(a, b, N);
-        sink += rt_fn(a, b, N);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            sink += memcmp(a, b, N);
+            sink += rt_fn(a, b, N);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink += memcmp(a, b, N);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink += rt_fn(a, b, N);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += memcmp(a, b, N);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += rt_fn(a, b, N);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
     (void)sink;
 }
 
@@ -476,21 +517,28 @@ static void bench_strlen_fn(struct row *r, strlen_fn fn)
     row_add(r, fn("0123456789abcdef") == 16); /* exactly one NEON block */
     row_add(r, fn("0123456789abcdefZ") == 17);
 
-    for (k = 0; k < WARM; k++) {
-        sink += strlen(s);
-        sink += fn(s);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            sink += strlen(s);
+            sink += fn(s);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink += strlen(s);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink += fn(s);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += strlen(s);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += fn(s);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
     (void)sink;
 }
 
@@ -509,21 +557,28 @@ static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
 
     row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
 
-    for (k = 0; k < WARM; k++) {
-        sink += strcmp(a, b);
-        sink += fn(a, b);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            sink += strcmp(a, b);
+            sink += fn(a, b);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink += strcmp(a, b);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink += fn(a, b);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += strcmp(a, b);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += fn(a, b);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
     (void)sink;
 }
 
@@ -546,21 +601,28 @@ static void bench_strchr_fn(struct row *r, strchr_fn fn)
     row_add(r, fn("", 'a') == strchr("", 'a'));
     row_add(r, fn("x", 'x') == strchr("x", 'x'));
 
-    for (k = 0; k < WARM; k++) {
-        sink = strchr(s, 'Z');
-        sink = fn(s, 'Z');
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            sink = strchr(s, 'Z');
+            sink = fn(s, 'Z');
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink = strchr(s, 'Z');
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink = fn(s, 'Z');
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink = strchr(s, 'Z');
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink = fn(s, 'Z');
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
     (void)sink;
 }
 
@@ -580,21 +642,28 @@ static void bench_strcpy(struct row *r)
     rt_strcpy(db, src);
     row_add(r, strcmp(da, db) == 0);
 
-    for (k = 0; k < WARM; k++) {
-        strcpy(da, src);
-        rt_strcpy(db, src);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            strcpy(da, src);
+            rt_strcpy(db, src);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                strcpy(da, src);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                rt_strcpy(db, src);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        strcpy(da, src);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        rt_strcpy(db, src);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
 }
 
 static void bench_strstr(struct row *r)
@@ -613,21 +682,28 @@ static void bench_strstr(struct row *r)
 
     row_add(r, rt_strstr(hay, nd) == strstr(hay, nd));
 
-    for (k = 0; k < WARM; k++) {
-        sink = strstr(hay, nd);
-        sink = rt_strstr(hay, nd);
+    {
+        uint64_t lc[SAMPLES], rt_t[SAMPLES];
+        int si;
+        for (k = 0; k < WARM; k++) {
+            sink = strstr(hay, nd);
+            sink = rt_strstr(hay, nd);
+        }
+        for (si = 0; si < SAMPLES; si++) {
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink = strstr(hay, nd);
+            t1 = now_ns();
+            lc[si] = t1 - t0;
+            t0 = now_ns();
+            for (k = 0; k < LOOPS; k++)
+                sink = rt_strstr(hay, nd);
+            t1 = now_ns();
+            rt_t[si] = t1 - t0;
+        }
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
     }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink = strstr(hay, nd);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink = rt_strstr(hay, nd);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
     (void)sink;
 }
 
@@ -765,11 +841,16 @@ static void run_numeric(void)
 
 static void run_sort(void)
 {
-    struct row *r = row_begin("qsort", "scalar", GRP_SORT);
-    int a[256], b[256];
+    struct row *r;
+    int a[1024], b[1024], c[1024];
     size_t n, k;
     uint64_t t0, t1;
+    int si;
+    uint64_t lc[SAMPLES], rt_t[SAMPLES];
+    enum { N = 512, LOOPS = 16 };
 
+    /* correctness: shell + neo vs host */
+    r = row_begin("qsort", "scalar", GRP_SORT);
     for (n = 0; n <= 64; n++) {
         for (k = 0; k < n; k++)
             a[k] = b[k] = (int)(rnd() % 1000u) - 500;
@@ -777,32 +858,81 @@ static void run_sort(void)
         qsort(b, n, sizeof(int), icmp);
         row_add(r, memcmp(a, b, n * sizeof(int)) == 0);
     }
-
-    for (k = 0; k < 256; k++)
+    for (k = 0; k < (size_t)N; k++)
         a[k] = b[k] = (int)(rnd() % 10000u);
-
     for (k = 0; k < WARM; k++) {
-        memcpy(a, b, sizeof b);
-        qsort(a, 256, sizeof(int), icmp);
-        memcpy(a, b, sizeof b);
-        rt_qsort(a, 256, sizeof(int), icmp);
+        memcpy(a, b, sizeof(int) * (size_t)N);
+        qsort(a, (size_t)N, sizeof(int), icmp);
+        memcpy(a, b, sizeof(int) * (size_t)N);
+        rt_qsort(a, (size_t)N, sizeof(int), icmp);
     }
-    memcpy(a, b, sizeof b);
-    t0 = now_ns();
-    for (k = 0; k < 32; k++) {
-        memcpy(a, b, sizeof b);
-        qsort(a, 256, sizeof(int), icmp);
+    for (si = 0; si < SAMPLES; si++) {
+        t0 = now_ns();
+        for (k = 0; k < (size_t)LOOPS; k++) {
+            memcpy(a, b, sizeof(int) * (size_t)N);
+            qsort(a, (size_t)N, sizeof(int), icmp);
+        }
+        t1 = now_ns();
+        lc[si] = t1 - t0;
+        t0 = now_ns();
+        for (k = 0; k < (size_t)LOOPS; k++) {
+            memcpy(a, b, sizeof(int) * (size_t)N);
+            rt_qsort(a, (size_t)N, sizeof(int), icmp);
+        }
+        t1 = now_ns();
+        rt_t[si] = t1 - t0;
     }
-    t1 = now_ns();
-    if (r) r->libc_ns = t1 - t0;
+    if (r) {
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
+    }
 
-    t0 = now_ns();
-    for (k = 0; k < 32; k++) {
-        memcpy(a, b, sizeof b);
-        rt_qsort(a, 256, sizeof(int), icmp);
+    r = row_begin("qsort_neo", "scalar", GRP_SORT);
+    for (n = 0; n <= 128; n++) {
+        for (k = 0; k < n; k++)
+            a[k] = c[k] = (int)(rnd() % 1000u) - 500;
+        rt_qsort_neo(a, n, sizeof(int), icmp);
+        qsort(c, n, sizeof(int), icmp);
+        row_add(r, memcmp(a, c, n * sizeof(int)) == 0);
     }
-    t1 = now_ns();
-    if (r) r->rt_ns = t1 - t0;
+    /* patterns: already sorted, reversed, random */
+    for (k = 0; k < (size_t)N; k++) b[k] = (int)k;
+    rt_qsort_neo(b, (size_t)N, sizeof(int), icmp);
+    row_add(r, 1);
+    for (k = 0; k < (size_t)N; k++) b[k] = (int)((size_t)N - k);
+    rt_qsort_neo(b, (size_t)N, sizeof(int), icmp);
+    for (k = 1; k < (size_t)N; k++)
+        if (b[k-1] > b[k]) { row_add(r, 0); break; }
+    if (k == (size_t)N) row_add(r, 1);
+
+    for (k = 0; k < (size_t)N; k++)
+        a[k] = b[k] = (int)(rnd() % 100000u);
+    for (k = 0; k < WARM; k++) {
+        memcpy(a, b, sizeof(int) * (size_t)N);
+        qsort(a, (size_t)N, sizeof(int), icmp);
+        memcpy(a, b, sizeof(int) * (size_t)N);
+        rt_qsort_neo(a, (size_t)N, sizeof(int), icmp);
+    }
+    for (si = 0; si < SAMPLES; si++) {
+        t0 = now_ns();
+        for (k = 0; k < (size_t)LOOPS; k++) {
+            memcpy(a, b, sizeof(int) * (size_t)N);
+            qsort(a, (size_t)N, sizeof(int), icmp);
+        }
+        t1 = now_ns();
+        lc[si] = t1 - t0;
+        t0 = now_ns();
+        for (k = 0; k < (size_t)LOOPS; k++) {
+            memcpy(a, b, sizeof(int) * (size_t)N);
+            rt_qsort_neo(a, (size_t)N, sizeof(int), icmp);
+        }
+        t1 = now_ns();
+        rt_t[si] = t1 - t0;
+    }
+    if (r) {
+        r->libc_ns = median_u64(lc, SAMPLES);
+        r->rt_ns = median_u64(rt_t, SAMPLES);
+    }
 }
 
 static void run_format(void)

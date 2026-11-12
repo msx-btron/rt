@@ -39,12 +39,18 @@ SYM(rt_memcpy_neon):
     b.lo .Lmc_small_ptr
 
 .Lmc_mid:
-    /* 16..63: one q at a time */
+    /* 16..63 */
+    cmp x2, #32
+    b.lo 1f
+    ldp q0, q1, [x1], #32
+    stp q0, q1, [x0], #32
+    sub x2, x2, #32
+1:
+    cmp x2, #16
+    b.lo .Lmc_small_ptr
     ldr q0, [x1], #16
     str q0, [x0], #16
     sub x2, x2, #16
-    cmp x2, #16
-    b.hs .Lmc_mid
     cbz x2, .Lmc_ret
 
 .Lmc_small_ptr:

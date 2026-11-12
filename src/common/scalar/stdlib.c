@@ -160,6 +160,295 @@ void rt_qsort(void *base, size_t nmemb, size_t size,
     }
 }
 
+
+/* ========================================================================
+   rt_qsort_neo — iterative introsort
+   ------------------------------------------------------------------------
+   NASA JPL Power of Ten / BTRON constraints observed:
+     - no recursion (explicit stack, max 64 frames)
+     - all loops have fixed upper bounds derived from nmemb / depth
+     - no dynamic allocation
+     - single compilation unit, no libc sort dependency
+   Algorithm: quicksort with median-of-three, insertion sort for small
+   partitions (≤ 16), heapsort fallback when depth exceeds 2·⌊log2 n⌋.
+   ======================================================================== */
+
+enum { NEO_INS = 16, NEO_STACK = 64, NEO_TMP = 256 };
+
+static void neo_swap(unsigned char *a, unsigned char *b, size_t n)
+{
+    unsigned char tmp[NEO_TMP];
+    size_t k;
+    if (n <= sizeof tmp) {
+        for (k = 0; k < n; k++) tmp[k] = a[k];
+        for (k = 0; k < n; k++) a[k] = b[k];
+        for (k = 0; k < n; k++) b[k] = tmp[k];
+        return;
+    }
+    for (k = 0; k < n; k++) {
+        unsigned char c = a[k];
+        a[k] = b[k];
+        b[k] = c;
+    }
+}
+
+static void neo_insertion(unsigned char *b, size_t lo, size_t hi, size_t size,
+                          int (*cmp)(const void *, const void *))
+{
+    size_t i, j;
+    unsigned char tmp[NEO_TMP];
+    int small = size <= sizeof tmp;
+
+    for (i = lo + 1; i <= hi; i++) {
+        j = i;
+        if (small) {
+            size_t k;
+            for (k = 0; k < size; k++) tmp[k] = b[i * size + k];
+            while (j > lo && cmp(b + (j - 1) * size, tmp) > 0) {
+                size_t t;
+                for (t = 0; t < size; t++)
+                    b[j * size + t] = b[(j - 1) * size + t];
+                j--;
+            }
+            for (k = 0; k < size; k++) b[j * size + k] = tmp[k];
+        } else {
+            while (j > lo && cmp(b + (j - 1) * size, b + j * size) > 0) {
+                neo_swap(b + (j - 1) * size, b + j * size, size);
+                j--;
+            }
+        }
+    }
+}
+
+static void neo_sift_down(unsigned char *b, size_t start, size_t end, size_t size,
+                          int (*cmp)(const void *, const void *))
+{
+    size_t root = start;
+    /* end is inclusive; bound: at most end iterations */
+    while (root * 2 + 1 <= end) {
+        size_t child = root * 2 + 1;
+        size_t swap_i = root;
+        if (cmp(b + swap_i * size, b + child * size) < 0)
+            swap_i = child;
+        if (child + 1 <= end && cmp(b + swap_i * size, b + (child + 1) * size) < 0)
+            swap_i = child + 1;
+        if (swap_i == root)
+            return;
+        neo_swap(b + root * size, b + swap_i * size, size);
+        root = swap_i;
+    }
+}
+
+static void neo_heapsort(unsigned char *b, size_t lo, size_t hi, size_t size,
+                         int (*cmp)(const void *, const void *))
+{
+    size_t n, i;
+    if (hi <= lo)
+        return;
+    /* Work on a compact view [0..n) via pointer offset */
+    b += lo * size;
+    n = hi - lo + 1;
+    i = n / 2;
+    while (i > 0) {
+        i--;
+        neo_sift_down(b, i, n - 1, size, cmp);
+    }
+    i = n;
+    while (i > 1) {
+        i--;
+        neo_swap(b, b + i * size, size);
+        neo_sift_down(b, 0, i - 1, size, cmp);
+    }
+}
+
+static size_t neo_ilog2(size_t n)
+{
+    size_t d = 0;
+    while (n > 1) {
+        n >>= 1;
+        d++;
+    }
+    return d;
+}
+
+/* Partition [lo, hi], return final pivot index. Median-of-three. */
+static size_t neo_partition(unsigned char *b, size_t lo, size_t hi, size_t size,
+                            int (*cmp)(const void *, const void *))
+{
+    size_t mid = lo + (hi - lo) / 2;
+    unsigned char *p;
+
+    /* sort lo, mid, hi */
+    if (cmp(b + mid * size, b + lo * size) < 0)
+        neo_swap(b + mid * size, b + lo * size, size);
+    if (cmp(b + hi * size, b + lo * size) < 0)
+        neo_swap(b + hi * size, b + lo * size, size);
+    if (cmp(b + hi * size, b + mid * size) < 0)
+        neo_swap(b + hi * size, b + mid * size, size);
+
+    /* pivot = mid, move to hi-1 */
+    neo_swap(b + mid * size, b + (hi - 1) * size, size);
+    p = b + (hi - 1) * size;
+    {
+        size_t i = lo;
+        size_t j = hi - 1;
+        for (;;) {
+            do { i++; } while (cmp(b + i * size, p) < 0);
+            do { j--; } while (cmp(b + j * size, p) > 0);
+            if (i >= j)
+                break;
+            neo_swap(b + i * size, b + j * size, size);
+        }
+        neo_swap(b + i * size, b + (hi - 1) * size, size);
+        return i;
+    }
+}
+
+/* Fast path for int-sized keys (oracle / common RT case). */
+static void neo_qsort_int(int *a, size_t nmemb,
+                          int (*cmp)(const void *, const void *))
+{
+    struct { size_t lo, hi; size_t depth; } stk[NEO_STACK];
+    size_t sp, max_depth;
+
+    max_depth = 2 * neo_ilog2(nmemb) + 2;
+    stk[0].lo = 0;
+    stk[0].hi = nmemb - 1;
+    stk[0].depth = max_depth;
+    sp = 1;
+
+    while (sp > 0) {
+        size_t lo, hi, depth, n, i, j;
+        int pivot;
+        sp--;
+        lo = stk[sp].lo;
+        hi = stk[sp].hi;
+        depth = stk[sp].depth;
+        if (hi <= lo)
+            continue;
+        n = hi - lo + 1;
+
+        if (n <= 24) {
+            /* insertion */
+            for (i = lo + 1; i <= hi; i++) {
+                int v = a[i];
+                j = i;
+                while (j > lo && cmp(&a[j - 1], &v) > 0) {
+                    a[j] = a[j - 1];
+                    j--;
+                }
+                a[j] = v;
+            }
+            continue;
+        }
+        if (depth == 0) {
+            neo_heapsort((unsigned char *)a, lo, hi, sizeof(int), cmp);
+            continue;
+        }
+        /* median-of-three into a[hi] */
+        {
+            size_t mid = lo + (hi - lo) / 2;
+            if (cmp(&a[mid], &a[lo]) < 0) { int t = a[mid]; a[mid] = a[lo]; a[lo] = t; }
+            if (cmp(&a[hi],  &a[lo]) < 0) { int t = a[hi];  a[hi]  = a[lo]; a[lo] = t; }
+            if (cmp(&a[hi],  &a[mid]) < 0) { int t = a[hi];  a[hi]  = a[mid]; a[mid] = t; }
+            pivot = a[mid];
+            a[mid] = a[hi - 1];
+            a[hi - 1] = pivot;
+        }
+        i = lo;
+        j = hi - 1;
+        for (;;) {
+            do { i++; } while (cmp(&a[i], &pivot) < 0);
+            do { j--; } while (cmp(&a[j], &pivot) > 0);
+            if (i >= j)
+                break;
+            { int t = a[i]; a[i] = a[j]; a[j] = t; }
+        }
+        a[hi - 1] = a[i];
+        a[i] = pivot;
+
+        if (i > lo + 1 && sp < NEO_STACK) {
+            stk[sp].lo = lo; stk[sp].hi = i - 1; stk[sp].depth = depth - 1; sp++;
+        } else if (i > lo + 1) {
+            neo_heapsort((unsigned char *)a, lo, i - 1, sizeof(int), cmp);
+        }
+        if (i + 1 < hi && sp < NEO_STACK) {
+            stk[sp].lo = i + 1; stk[sp].hi = hi; stk[sp].depth = depth - 1; sp++;
+        } else if (i + 1 < hi) {
+            neo_heapsort((unsigned char *)a, i + 1, hi, sizeof(int), cmp);
+        }
+    }
+}
+
+void rt_qsort_neo(void *base, size_t nmemb, size_t size,
+                  int (*cmp)(const void *, const void *))
+{
+    unsigned char *b = (unsigned char *)base;
+    struct { size_t lo, hi; size_t depth; } stk[NEO_STACK];
+    size_t sp = 0;
+    size_t max_depth;
+
+    if (nmemb < 2 || size == 0 || !cmp)
+        return;
+
+    if (size == sizeof(int) && ((uintptr_t)base % sizeof(int)) == 0) {
+        neo_qsort_int((int *)base, nmemb, cmp);
+        return;
+    }
+
+    max_depth = 2 * neo_ilog2(nmemb) + 1;
+    if (max_depth < 2)
+        max_depth = 2;
+
+    stk[0].lo = 0;
+    stk[0].hi = nmemb - 1;
+    stk[0].depth = max_depth;
+    sp = 1;
+
+    while (sp > 0) {
+        size_t lo, hi, depth, n;
+        sp--;
+        lo = stk[sp].lo;
+        hi = stk[sp].hi;
+        depth = stk[sp].depth;
+        if (hi <= lo)
+            continue;
+        n = hi - lo + 1;
+
+        if (n <= NEO_INS) {
+            neo_insertion(b, lo, hi, size, cmp);
+            continue;
+        }
+        if (depth == 0) {
+            neo_heapsort(b, lo, hi, size, cmp);
+            continue;
+        }
+        {
+            size_t p = neo_partition(b, lo, hi, size, cmp);
+            if (p > lo) {
+                if (sp < NEO_STACK) {
+                    stk[sp].lo = lo;
+                    stk[sp].hi = p - 1;
+                    stk[sp].depth = depth - 1;
+                    sp++;
+                } else {
+                    neo_heapsort(b, lo, p - 1, size, cmp);
+                }
+            }
+            if (p < hi) {
+                if (sp < NEO_STACK) {
+                    stk[sp].lo = p + 1;
+                    stk[sp].hi = hi;
+                    stk[sp].depth = depth - 1;
+                    sp++;
+                } else {
+                    neo_heapsort(b, p + 1, hi, size, cmp);
+                }
+            }
+        }
+    }
+}
+
 /* ---- optional first-fit pool ---- */
 enum { HDR = 8 }; /* size_t size | 1=free */
 
