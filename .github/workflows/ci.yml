@@ -20,7 +20,7 @@ jobs:
   # Host oracle: scalar + SSE2 + AVX2 + AVX-512 (CPU-probed)
   # ------------------------------------------------------------------
   x86_64-native:
-    name: x86_64 (SSE2/AVX/AVX/2AVX-512)
+    name: EM64T SSE2/AVX/AVX2/AVX-512
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
   # i386 ladder under qemu-i386: 386 / MMX / SSE (+ assemble PC-98)
   # ------------------------------------------------------------------
   i386-qemu:
-    name: i386 (MMX/SSE/REP)
+    name: IA-32 MMX/SSE/REP
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -68,7 +68,7 @@ jobs:
   # AArch64 NEON under qemu-aarch64
   # ------------------------------------------------------------------
   aarch64-neon-qemu:
-    name: AArch64 (NEON)
+    name: AArch64 NEON
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -91,7 +91,7 @@ jobs:
   # AArch64 SVE assemble + link smoke (runtime optional)
   # ------------------------------------------------------------------
   aarch64-sve:
-    name: AArch64 (SVE)
+    name: AArch64 SVE
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -137,7 +137,7 @@ jobs:
   # RISC-V 64 RVV
   # ------------------------------------------------------------------
   riscv64-rvv:
-    name: RISC-V64 (RVV64)
+    name: RISC-V64 RVV64
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -181,7 +181,7 @@ jobs:
   # RISC-V 32 RVV
   # ------------------------------------------------------------------
   riscv32-rvv:
-    name: RISC-V32 (RVV32)
+    name: RISC-V32 RVV32
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
