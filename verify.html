@@ -30,15 +30,15 @@
     <h1>Prove the bytes.</h1>
     <div class="hero-rule"></div>
     <p class="hero-lede">
-      A plan for the rt memory kernels: one small Coq development that states what
-      the bytes do, assembles them, and typechecks quickly. No proof file is in this
-      tree yet. Nothing here has been checked by <code>coqc</code>.
+      A plan for the rt memory kernels, and one proof that is already checked.
+      <code>make verify</code> runs Coq on the 16-byte NEON store in
+      <code>rt_memset_neon</code>. The rest of the plan is not proved yet.
     </p>
     <div class="hero-marks">
       <span>Coq</span>
       <span>Small kernel</span>
       <span>Fast coqc</span>
-      <span>i386 REP first</span>
+      <span>make verify</span>
     </div>
   </div>
 </header>
@@ -121,11 +121,11 @@
           <li><strong>Kernel</strong><span>Functional specs of <code>memcpy</code>, <code>memmove</code>, <code>memset</code>, and <code>memcmp</code>. No extractor standing in for a proof. No C parser.</span></li>
           <li><strong>Check</strong><span><code>vm_compute</code> on lengths 0, 1, 7, 8, and 16, the sizes the host oracle already treats as edges.</span></li>
           <li><strong>Stop rule</strong><span>If <code>coqc</code> gets slow, delete the abstraction that caused it. Do not add a CI job that hides the cost.</span></li>
-          <li><strong>Not yet</strong><span>There is no <code>coq/</code> directory. Adding an empty one would pretend a proof exists.</span></li>
+          <li><strong>Checked</strong><span><code>coq/MemsetNeon.v</code> is the bytes of <code>rt_memset_neon</code> for <code>n = 16</code>. One <code>dup.2d</code> and one <code>str q0</code>. Every fill byte from 0 to 255. <code>make verify</code> is <code>coqc</code> on that file.</span></li>
         </ul>
         <figcaption>
-          <span><b>Status</b> — plan only</span>
-          <span>Host oracle and make security stay the checks that run today</span>
+          <span><b>Status</b> — n = 16 checked</span>
+          <span>Other lengths, and the other kernels, are still open</span>
         </figcaption>
       </figure>
     </div>
@@ -225,7 +225,7 @@
         <ul class="spec">
           <li><strong>Behaviour</strong><span><a href="bench.html">bench.html</a> publishes the host oracle: rt against the C library on this machine. Coefficient is libc time over rt time.</span></li>
           <li><strong>C scan</strong><span><a href="security.html">security.html</a> is <code>make security</code>. That gate does not read the assembly, and it does not discharge a proof.</span></li>
-          <li><strong>Not in CI</strong><span>No <code>coqc</code> step. Adding one before phase 1 would check an empty directory.</span></li>
+          <li><strong>Coq</strong><span><code>make verify</code> checks <code>coq/MemsetNeon.v</code>. The GitHub workflow does not run <code>coqc</code> yet.</span></li>
         </ul>
         <figcaption>
           <span><b>Boundary</b> — a page is not a proof</span>

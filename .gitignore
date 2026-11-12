@@ -1,0 +1,8 @@
+verify/build
+*.o
+*.vo
+*.vos
+*.vok
+*.glob
+*.vo.aux
+*.aux
