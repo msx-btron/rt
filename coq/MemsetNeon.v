@@ -949,3 +949,290 @@ Proof.
   replace (rest - 16 - 16)%nat with (rest - 32)%nat by lia.
   reflexivity.
 Qed.
+(* --- one machine step, instruction supplied by the caller --- *)
+
+Lemma step_then : forall s s' k s2,
+  s.(done) = false ->
+  step_at s = Some s' ->
+  steps k s' = Some s2 ->
+  steps (S k) s = Some s2.
+Proof. intros s s' k s2 Hd Hs Hk. simpl. rewrite Hd, Hs. exact Hk. Qed.
+
+Lemma step_cmp : forall r0 r1 r3 r8 lo hi mem p c z qs rest imm w,
+  (rest < 2 ^ 64)%nat ->
+  (imm < 2 ^ 64)%nat ->
+  word_at p = Some w ->
+  decode w = Some (AddSub true true 64 31 2 (N.of_nat imm)) ->
+  step_at (Mk r0 r1 (N.of_nat rest) r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 (N.of_nat rest) r3 r8 lo hi mem (p + 4)
+           ((imm <=? rest)%nat) ((rest =? imm)%nat) false qs).
+Proof.
+  intros.
+  unfold step_at. cbn [pc]. rewrite H1, H2. unfold step.
+  cbn [getr setr setflags setpc andb r2].
+  rewrite flag_C by lia. rewrite flag_Z by lia. reflexivity.
+Qed.
+
+Lemma step_add0 : forall r1 r2 r3 r8 lo hi mem p c z qs filled delta w,
+  (filled + delta < 2 ^ 64)%nat ->
+  word_at p = Some w ->
+  decode w = Some (AddSub false false 64 0 0 (N.of_nat delta)) ->
+  step_at (Mk (N.of_nat filled) r1 r2 r3 r8 lo hi mem p c z false qs) =
+  Some (Mk (N.of_nat (filled + delta)) r1 r2 r3 r8 lo hi mem (p + 4) c z false qs).
+Proof.
+  intros.
+  unfold step_at. cbn [pc]. rewrite H0, H1. unfold step.
+  cbn [getr setr setpc andb r0].
+  rewrite addm_small by lia. rewrite Nat2N.inj_add. reflexivity.
+Qed.
+
+Lemma step_sub2 : forall r0 r1 r3 r8 lo hi mem p c z qs rest delta w,
+  (delta <= rest)%nat ->
+  (rest < 2 ^ 64)%nat ->
+  word_at p = Some w ->
+  decode w = Some (AddSub true false 64 2 2 (N.of_nat delta)) ->
+  step_at (Mk r0 r1 (N.of_nat rest) r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 (N.of_nat (rest - delta)) r3 r8 lo hi mem (p + 4) c z false qs).
+Proof.
+  intros.
+  unfold step_at. cbn [pc]. rewrite H1, H2. unfold step.
+  cbn [getr setr setpc andb r2].
+  rewrite subm_ge by lia. reflexivity.
+Qed.
+
+Lemma step_bcond : forall r0 r1 r2 r3 r8 lo hi mem p c z qs off cond taken w,
+  word_at p = Some w ->
+  decode w = Some (Bcond off cond) ->
+  take_cond c cond = Some taken ->
+  step_at (Mk r0 r1 r2 r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 r2 r3 r8 lo hi mem
+            (if taken then pc_add p off else p + 4) c z false qs).
+Proof.
+  intros.
+  unfold step_at. cbn [pc]. rewrite H, H0. unfold step. cbn [fc]. rewrite H1.
+  destruct taken; cbn [setpc]; reflexivity.
+Qed.
+
+Lemma step_cbz : forall r0 r1 r3 r8 lo hi mem p c z qs rest off w,
+  word_at p = Some w ->
+  decode w = Some (Cbz 2 off) ->
+  step_at (Mk r0 r1 (N.of_nat rest) r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 (N.of_nat rest) r3 r8 lo hi mem
+            (if (rest =? 0)%nat then pc_add p off else p + 4) c z false qs).
+Proof.
+  intros.
+  unfold step_at. cbn [pc]. rewrite H, H0. unfold step.
+  cbn [getr setpc r2]. rewrite eqb0_nat.
+  destruct (rest =? 0)%nat; reflexivity.
+Qed.
+
+Lemma step_tbz : forall r0 r1 r3 r8 lo hi mem p c z qs rest bit off w,
+  word_at p = Some w ->
+  decode w = Some (Tbz 2 bit off) ->
+  step_at (Mk r0 r1 (N.of_nat rest) r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 (N.of_nat rest) r3 r8 lo hi mem
+            (if N.testbit (N.of_nat rest) bit then p + 4 else pc_add p off)
+            c z false qs).
+Proof.
+  intros.
+  unfold step_at. cbn [pc]. rewrite H, H0. unfold step.
+  cbn [getr setpc r2]. destruct (N.testbit (N.of_nat rest) bit); reflexivity.
+Qed.
+
+Lemma step_b : forall r0 r1 r2 r3 r8 lo hi mem p c z qs off w,
+  word_at p = Some w ->
+  decode w = Some (B off) ->
+  step_at (Mk r0 r1 r2 r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 r2 r3 r8 lo hi mem (pc_add p off) c z false qs).
+Proof.
+  intros. unfold step_at. cbn [pc]. rewrite H, H0. unfold step. cbn [setpc]. reflexivity.
+Qed.
+
+Lemma step_nop : forall r0 r1 r2 r3 r8 lo hi mem p c z qs w,
+  word_at p = Some w ->
+  decode w = Some Nop ->
+  step_at (Mk r0 r1 r2 r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 r2 r3 r8 lo hi mem (p + 4) c z false qs).
+Proof.
+  intros. unfold step_at. cbn [pc]. rewrite H, H0. unfold step. cbn [setpc]. reflexivity.
+Qed.
+
+Lemma step_ret : forall r0 r1 r2 r3 r8 lo hi mem p c z qs w,
+  word_at p = Some w ->
+  decode w = Some Ret ->
+  step_at (Mk r0 r1 r2 r3 r8 lo hi mem p c z false qs) =
+  Some (Mk r0 r1 r2 r3 r8 lo hi mem p c z true qs).
+Proof. intros. unfold step_at. cbn [pc]. rewrite H, H0. reflexivity. Qed.
+
+Lemma step_mov0 : forall r0 r1 r2 r3 lo hi mem p c z qs w,
+  word_at p = Some w ->
+  decode w = Some (Orr true 0 31 8 0) ->
+  step_at (Mk r0 r1 r2 r3 0 lo hi mem p c z false qs) =
+  Some (Mk 0 r1 r2 r3 0 lo hi mem (p + 4) c z false qs).
+Proof.
+  intros.
+  unfold step_at. cbn [pc]. rewrite H, H0. unfold step.
+  cbn [getr setr setpc r8].
+  replace (orrv 0 0 0 64) with 0 by (vm_compute; reflexivity).
+  reflexivity.
+Qed.
+
+(* 32-byte stp of the splat, pointer unchanged, qstore set. *)
+Lemma step_stp : forall b ptr delta rest r1 r2 r3 r8 p c z qs w,
+  b < 256 ->
+  (32 <= rest)%nat ->
+  word_at p = Some w ->
+  decode w = Some (StpQ 0 0 0 (Z.of_nat delta)) ->
+  step_at (Mk (N.of_nat ptr) r1 r2 r3 r8 (splatb b) (splatb b)
+              (repeat b (ptr + delta) ++ repeat 0 rest)
+              p c z false qs) =
+  Some (Mk (N.of_nat ptr) r1 r2 r3 r8 (splatb b) (splatb b)
+            (repeat b (ptr + delta + 32) ++ repeat 0 (rest - 32))
+            (p + 4) c z false true).
+Proof.
+  intros b ptr delta rest r1 r2 r3 r8 p c z qs w Hb Hrest Hw Hd.
+  unfold step_at. cbn [pc]. rewrite Hw, Hd. unfold step.
+  cbn [getr lo hi mem r0 pc N.eqb andb negb].
+  rewrite zadd_nat. rewrite Nat2N.id.
+  replace (le_bytes (splatb b) 8 ++ le_bytes (splatb b) 8) with (repeat b 16)
+    by (symmetry; apply le_bytes_16; exact Hb).
+  assert (H16 : (16 <= rest)%nat) by lia.
+  rewrite (write_block 16 b (ptr + delta) rest H16).
+  cbn iota.
+  rewrite zadd16. rewrite Nat2N.id.
+  rewrite (write_block 16 b (ptr + delta + 16) (rest - 16)) by lia.
+  cbn iota. cbn [setmem].
+  replace (ptr + delta + 16 + 16)%nat with (ptr + delta + 32)%nat by lia.
+  replace (rest - 16 - 16)%nat with (rest - 32)%nat by lia.
+  reflexivity.
+Qed.
+
+Lemma step_strq : forall b ptr rest r1 r2 r8 p c z qs w,
+  b < 256 ->
+  (16 <= rest)%nat ->
+  word_at p = Some w ->
+  decode w = Some (StrQ 0 0 16%Z) ->
+  step_at (Mk (N.of_nat ptr) r1 r2 (splatb b) r8 (splatb b) (splatb b)
+              (repeat b ptr ++ repeat 0 rest) p c z false qs) =
+  Some (Mk (N.of_nat (ptr + 16)) r1 r2 (splatb b) r8 (splatb b) (splatb b)
+            (repeat b (ptr + 16) ++ repeat 0 (rest - 16))
+            (p + 4) c z false true).
+Proof.
+  intros b ptr rest r1 r2 r8 p c z qs w Hb Hrest Hw Hd.
+  unfold step_at. cbn [pc]. rewrite Hw, Hd. unfold step.
+  cbn [getr lo hi mem r0 pc N.eqb negb].
+  rewrite Nat2N.id.
+  replace (le_bytes (splatb b) 8 ++ le_bytes (splatb b) 8) with (repeat b 16)
+    by (symmetry; apply le_bytes_16; exact Hb).
+  rewrite (write_block 16 b ptr rest Hrest).
+  cbn iota.
+  rewrite zadd16.
+  cbn [setr setmem setpc].
+  reflexivity.
+Qed.
+
+Lemma step_strk : forall b ptr rest k r1 r8 p c z qs w,
+  b < 256 ->
+  (k <= rest)%nat ->
+  (k <= 8)%nat ->
+  word_at p = Some w ->
+  decode w = Some (StrPost k 3 0 (Z.of_nat k)) ->
+  step_at (Mk (N.of_nat ptr) r1 (N.of_nat rest) (splatb b) r8
+              (splatb b) (splatb b)
+              (repeat b ptr ++ repeat 0 rest) p c z false qs) =
+  Some (Mk (N.of_nat (ptr + k)) r1 (N.of_nat rest) (splatb b) r8
+            (splatb b) (splatb b)
+            (repeat b (ptr + k) ++ repeat 0 (rest - k))
+            (p + 4) c z false qs).
+Proof.
+  intros b ptr rest k r1 r8 p c z qs w Hb Hk H8 Hw Hd.
+  unfold step_at. cbn [pc]. rewrite Hw, Hd. unfold step.
+  cbn [getr lo hi mem r0 r3 pc].
+  rewrite zadd_nat. rewrite Nat2N.id.
+  rewrite le_bytes_width by (exact Hb || lia).
+  rewrite (write_block k b ptr rest Hk).
+  cbn iota.
+  cbn [setr setmem setpc].
+  rewrite Nat2N.inj_add. reflexivity.
+Qed.
+
+Lemma step_strb : forall b ptr rest r1 r2 r8 p c z qs w,
+  b < 256 ->
+  (1 <= rest)%nat ->
+  word_at p = Some w ->
+  decode w = Some (StrB 3 0 0) ->
+  step_at (Mk (N.of_nat ptr) r1 r2 (splatb b) r8 (splatb b) (splatb b)
+              (repeat b ptr ++ repeat 0 rest) p c z false qs) =
+  Some (Mk (N.of_nat ptr) r1 r2 (splatb b) r8 (splatb b) (splatb b)
+            (repeat b (ptr + 1) ++ repeat 0 (rest - 1))
+            (p + 4) c z false qs).
+Proof.
+  intros b ptr rest r1 r2 r8 p c z qs w Hb Hone Hw Hd.
+  unfold step_at. cbn [pc]. rewrite Hw, Hd. unfold step.
+  cbn [getr lo hi mem r0 r3 pc].
+  rewrite N.add_0_r. rewrite Nat2N.id.
+  rewrite (le_bytes_width b 1%nat) by (exact Hb || lia).
+  rewrite (write_block 1%nat b ptr rest) by lia.
+  cbn [setmem].
+  reflexivity.
+Qed.
+
+(* Closed word/decode pairs used by the control-flow proof. *)
+Lemma W_add64 : word_at 56 = Some 0x91010000 /\
+  decode 0x91010000 = Some (AddSub false false 64 0 0 (N.of_nat 64)).
+Proof. vm_compute. split; reflexivity. Qed.
+
+Lemma use_add56 : forall r1 r2 r3 r8 lo hi mem c z qs filled,
+  (filled + 64 < 2 ^ 64)%nat ->
+  step_at (Mk (N.of_nat filled) r1 r2 r3 r8 lo hi mem 56 c z false qs) =
+  Some (Mk (N.of_nat (filled + 64)) r1 r2 r3 r8 lo hi mem 60 c z false qs).
+Proof.
+  intros r1 r2 r3 r8 lo hi mem c z qs filled H.
+  destruct W_add64 as [Hw Hd].
+  etransitivity.
+  - apply (step_add0 r1 r2 r3 r8 lo hi mem 56 c z qs filled 64%nat
+            0x91010000 H Hw Hd).
+  - reflexivity.
+Qed.
+Ltac take_word p ins :=
+  let w := eval vm_compute in
+    (match word_at p with Some w0 => w0 | None => 0 end) in
+  let H := fresh "Hw" in
+  let Hw := fresh "Hword" in
+  let Hd := fresh "Hdec" in
+  assert (H : word_at p = Some w /\ decode w = Some ins)
+    by (vm_compute; split; reflexivity);
+  destruct H as [Hw Hd].
+
+Lemma epilogue : forall r0 r1 r2 r3 lo hi mem c z qs,
+  steps 2%nat (Mk r0 r1 r2 r3 0 lo hi mem 160 c z false qs) =
+  Some (Mk 0 r1 r2 r3 0 lo hi mem 164 c z true qs).
+Proof.
+  intros r0 r1 r2 r3 lo hi mem c z qs.
+  take_word 160 (Orr true 0 31 8 0).
+  take_word 164 Ret.
+  apply step_then with
+    (s' := Mk 0 r1 r2 r3 0 lo hi mem (160 + 4) c z false qs).
+  - reflexivity.
+  - eapply step_mov0; [exact Hword | exact Hdec].
+  - apply step_then with
+      (s' := Mk 0 r1 r2 r3 0 lo hi mem (160 + 4) c z true qs).
+    + reflexivity.
+    + eapply step_ret; [exact Hword0 | exact Hdec0].
+    + replace (160 + 4) with 164 by reflexivity. reflexivity.
+Qed.
+Ltac word_pair p ins k :=
+  let w := eval vm_compute in
+    (match word_at p with Some w0 => w0 | None => 0 end) in
+  let H1 := fresh "Hword" in
+  let H2 := fresh "Hdec" in
+  assert (H1 : word_at p = Some w) by (vm_compute; reflexivity);
+  assert (H2 : decode w = Some ins) by (vm_compute; reflexivity);
+  k H1 H2.
+
+Lemma i64_lt : (64 < 2 ^ 64)%nat.
+Proof. apply Nat.pow_gt_lin_r; lia. Qed.
+
+Lemma rest_lt64 : forall filled rest,
+  (filled + rest < 2 ^ 64)%nat -> (rest < 2 ^ 64)%nat.
+Proof. intros filled rest H. lia. Qed.
