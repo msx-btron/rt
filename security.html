@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQCSA · make security · B-System RT</title>
+<meta name="description" content="How the B-System rt library runs static analysis: make security with clang --analyze, flawfinder, and cppcheck.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@300;400;500;600&family=Shippori+Mincho:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="rt.css">
+</head>
+<body>
+
+<nav class="sticky" aria-label="Site">
+  <div class="nav-container">
+    <a href="index.html" class="logo">rt<span>BTRON.PRO</span></a>
+    <ul class="nav-links">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="bench.html">Performance</a></li>
+      <li><a href="security.html" aria-current="page">Security</a></li>
+      <li><a href="verify.html">Correctness</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-content">
+    <p class="hero-kicker">Static analysis · C99</p>
+    <h1>make security.</h1>
+    <div class="hero-rule"></div>
+    <p class="hero-lede">
+      One command runs three scanners over the scalar runtime and the host oracle.
+      A finding fails the recipe. Assembly is not in this scan.
+    </p>
+    <div class="hero-marks">
+      <span>clang --analyze</span>
+      <span>flawfinder ≥ 4</span>
+      <span>cppcheck</span>
+      <span>SQCSA Test Suite</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="band" id="command">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">00 / Command</span>
+        <h2>The gate</h2>
+        <p class="band-eyebrow">Top-level Makefile · BSD make · fail on a finding</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          From the repository root, <code>make security</code> runs <code>sec-scalar</code>,
+          then <code>sec-verify</code>, then <code>scripts/security_report.py</code>.
+          Each scanner target checks that <code>clang</code>, <code>flawfinder</code>, and
+          <code>cppcheck</code> are on <code>PATH</code>. A missing tool exits 1.
+        </p>
+        <p class="en">
+          The recipes are plain shell, duplicated per target, so the BSD make that ships
+          with macOS runs them. There is no GNU <code>define</code>.
+          <code>make security-report</code> prints the tree without scanning again.
+        </p>
+      </div>
+      <figure class="plate">
+        <pre class="cmd">$ make security
+<span class="dim"># sec-scalar, then sec-verify, then the ASCII tree</span>
+<span class="dim"># exit 0  — no finding</span>
+<span class="dim"># exit 1  — a clang warning, a flawfinder hit, a cppcheck finding, or the tree</span>
+<span class="dim"># exit 2  — the report ran and a scanner binary was missing</span></pre>
+        <figcaption>
+          <span><b>Gate</b> — a green process status is the check</span>
+          <span>Recorded in doc/txt/SQCSA.txt</span>
+        </figcaption>
+      </figure>
+      <p class="caveat">
+        clang <code>--analyze</code> can print a warning and still exit 0.
+        flawfinder exits 0 when it has hits. The Makefile does not trust those statuses.
+        It greps the clang log for <code>warning:</code> or <code>error:</code>, greps the
+        flawfinder log for a <code>:line:</code> hit, and passes
+        <code>--error-exitcode=1</code> to cppcheck.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="tools">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">01 / Tools</span>
+        <h2>Three scanners</h2>
+        <p class="band-eyebrow">Same flags as the host oracle, without -O2 and without -Werror</p>
+      </div>
+      <div class="card-grid">
+        <article class="card-item">
+          <div class="card-kicker">Clang</div>
+          <h3>Analyzer</h3>
+          <p>
+            <code>clang --analyze -std=c99 -Wall -Wextra -Wformat=2
+            -fno-strict-aliasing -fno-builtin -Iinclude
+            -Xanalyzer -analyzer-output=text</code>.
+            Optimization is off so the analyzer sees the source, not a folded binary.
+          </p>
+        </article>
+        <article class="card-item">
+          <div class="card-kicker">Flawfinder  ·  level 4</div>
+          <h3>Pattern hits</h3>
+          <p>
+            <code>flawfinder --minlevel=4 --quiet</code> on the scalar sources and on
+            the two oracle files. Level 5 is marked critical in the tree.
+            Level 2 notes on fixed <code>char</code> arrays stay below the gate.
+          </p>
+        </article>
+        <article class="card-item">
+          <div class="card-kicker">Cppcheck</div>
+          <h3>Warning and portability</h3>
+          <p>
+            <code>cppcheck -j4 --std=c99 --enable=warning,portability
+            --error-exitcode=1 --quiet -Iinclude</code>.
+            Style checks are not part of this gate.
+          </p>
+        </article>
+      </div>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>Critical</strong><span>Flawfinder level 5 and above, and a clang or cppcheck diagnostic whose severity is an error. The tree prints these in the critical column.</span></li>
+          <li><strong>Warning</strong><span>Every other finding the three filters keep: a clang warning, a flawfinder level-4 hit, a cppcheck warning or portability note. Warnings fail the recipe too.</span></li>
+          <li><strong>Not a defect by itself</strong><span>A hit names a call or a pattern. It is a defect when a read of that site shows the bad path can run. The gate still fails until the hit is gone or the filter no longer matches it.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>Severity</b> — both columns fail the build</span>
+          <span>scripts/security_report.py</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="scope">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">02 / Scope</span>
+        <h2>What is scanned</h2>
+        <p class="band-eyebrow">Four scalar C files · two oracle files · headers they include</p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Target</th>
+              <th>Files</th>
+              <th>Outside the scan</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Target"><code>sec-scalar</code></td>
+              <td data-label="Files"><code>src/common/scalar/mem.c</code>, <code>string.c</code>, <code>stdio.c</code>, <code>stdlib.c</code></td>
+              <td data-label="Outside">Assembly under <code>src/aarch64</code>, <code>src/i386</code>, <code>src/riscv32</code>, <code>src/riscv64</code>, <code>src/x86_64</code></td>
+            </tr>
+            <tr>
+              <td data-label="Target"><code>sec-verify</code></td>
+              <td data-label="Files"><code>verify/test_host.c</code>, <code>verify/test_mem.c</code></td>
+              <td data-label="Outside"><code>verify/build</code> and <code>verify/.cache</code></td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Scope</b> — C only</span>
+          <span>The three tools read C</span>
+        </figcaption>
+      </figure>
+      <p class="caveat">
+        Valgrind does not run in this gate. Coverity Scan and CodeChecker are not invoked.
+        <code>clang --analyze</code> is the semantic scanner that does run.
+      </p>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>When</strong><span>2026-11-13, Apple M4, macOS 27.0.1, Darwin arm64.</span></li>
+          <li><strong>Tools</strong><span>Apple clang 21.0.0, flawfinder 2.0.20, cppcheck 2.22.0.</span></li>
+          <li><strong>sec-scalar</strong><span>1,301 lines. Flawfinder level 4+: 0. Nine level-2 hits on fixed <code>char</code> arrays, below the gate. cppcheck 0. clang 0.</span></li>
+          <li><strong>sec-verify</strong><span>1,374 lines. Flawfinder level 4+: 0. cppcheck 0. clang 0.</span></li>
+          <li><strong>Process</strong><span><code>make security</code> exited 0. The tree printed SECURITY &amp; QUALITY GATE: PASSED.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>This machine</b> — one clean run</span>
+          <span>doc/txt/SQCSA.txt</span>
+        </figcaption>
+      </figure>
+
+      <div class="table-lead">
+        <div class="table-lead-kicker">Closed by the same gate</div>
+        <h3 class="table-lead-title">Hits the scanners named, and what the source does now</h3>
+        <p>
+          These sites were real diagnostics. They are described here so a later run
+          can be compared with the record in <code>doc/txt/SQCSA.txt</code>.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Site</th>
+              <th>Finding</th>
+              <th>What the code does</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Site"><code>rt_vsnprintf</code></td>
+              <td data-label="Finding">Null format. The pointer was captured before <code>fmt = ""</code>, so the store was dead and <code>*p</code> walked a null pointer.</td>
+              <td data-label="Now">A null format is an empty format. <code>p</code> is set after that replacement. The oracle checks <code>rt_snprintf(buf, n, NULL)</code> returns 0 and writes a NUL when <code>n &gt; 0</code>.</td>
+            </tr>
+            <tr>
+              <td data-label="Site"><code>verify/test_host.c</code> strcpy row</td>
+              <td data-label="Finding">Flawfinder level 4 on <code>strcpy</code>.</td>
+              <td data-label="Now">The libc side is <code>memcpy</code> of a counted length. The buffer is 512 bytes with the NUL in the last byte, so the count is the write <code>strcpy</code> would have made. <code>rt_strcpy</code> is still the function under test.</td>
+            </tr>
+            <tr>
+              <td data-label="Site">strchr / strstr timers</td>
+              <td data-label="Finding">Dead store. The sink was a pointer to volatile, and the warm-loop assignment was unused.</td>
+              <td data-label="Now">Each result is folded into a <code>volatile uintptr_t</code> with xor, and the sink is read after the loop.</td>
+            </tr>
+            <tr>
+              <td data-label="Site">Sort oracle</td>
+              <td data-label="Finding">cppcheck <code>uninitvar</code> on <code>qsort</code> when it assumed the fill loop did not run.</td>
+              <td data-label="Now">The arrays are zeroed. The printed tables and the timed runs use <code>qsort_neo</code> only. <code>rt_qsort</code> stays in the library and is not called by the oracle.</td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Record</b> — doc/txt/SQCSA.txt</span>
+          <span>python3 tools/sqcsa_update.py src/common/scalar verify</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="ci">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">03 / CI</span>
+        <h2>SQCSA Test Suite</h2>
+        <p class="band-eyebrow">.github/workflows/ci.yml · job id sqcsa · one scan job</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          GitHub Actions runs the same command on Ubuntu 24.04. The job installs
+          <code>clang</code>, <code>cppcheck</code>, <code>flawfinder</code>, and
+          <code>python3</code>, then runs <code>make security</code>.
+          A finding fails the job.
+        </p>
+        <p class="en">
+          The workflow summary depends on this job. There is not a second security job
+          beside it. The QEMU and native jobs build and test. They do not repeat the scan.
+        </p>
+      </div>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>Job id</strong><span><code>sqcsa</code></span></li>
+          <li><strong>Display name</strong><span>SQCSA Test Suite</span></li>
+          <li><strong>Runner</strong><span><code>ubuntu-24.04</code></span></li>
+          <li><strong>Step</strong><span><code>make security</code></span></li>
+          <li><strong>Updater</strong><span><code>tools/sqcsa_update.py</code> rewrites the per-module blocks and the summary table in <code>doc/txt/SQCSA.txt</code>. It does not rewrite the narrative sections.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>CI</b> — the job name is the check</span>
+          <span>Needs: summary fails if sqcsa fails</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="footer-columns">
+    <div>
+      <h4>Pages</h4>
+      <ul>
+        <li><a href="index.html">Study</a></li>
+        <li><a href="bench.html">Bench</a></li>
+        <li><a href="security.html">SQCSA</a></li>
+        <li><a href="verify.html">Verify</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Command</h4>
+      <ul>
+        <li>make security</li>
+        <li>make security-report</li>
+        <li>doc/txt/SQCSA.txt</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Scanners</h4>
+      <ul>
+        <li>clang --analyze</li>
+        <li>flawfinder --minlevel=4</li>
+        <li>cppcheck warning, portability</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer-legal">
+    <p class="hold">© 2026 Cryptographic Telesystems, LLC. Ukraine. All rights reserved.</p>
+    <p>btron.pro · B-System C Run-Time · SQCSA is the static-analysis gate for the scalar C and the host oracle.</p>
+  </div>
+</footer>
+
+</body>
+</html>

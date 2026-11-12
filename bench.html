@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Host oracle · Apple M4 · B-System RT</title>
+<meta name="description" content="Synthetic host-oracle timings of the B-System rt library against the C library shipped on an Apple M4. Coefficient is libc time over rt time.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@300;400;500;600&family=Shippori+Mincho:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="rt.css">
+</head>
+<body>
+
+<nav class="sticky" aria-label="Site">
+  <div class="nav-container">
+    <a href="index.html" class="logo">rt<span>BTRON.PRO</span></a>
+    <ul class="nav-links">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="bench.html" aria-current="page">Performance</a></li>
+      <li><a href="security.html">Security</a></li>
+      <li><a href="verify.html">Correctness</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-content">
+    <p class="hero-kicker">Host oracle · Apple M4 · 2026-11-13</p>
+    <h1>Faster than C library.</h1>
+    <div class="hero-rule"></div>
+    <p class="hero-lede">
+      On this machine rt is the faster library against the C library macOS ships.
+      The NEON kernels, <code>qsort_neo</code>, the number parsers, <code>snprintf</code>,
+      and the pool allocator beat it. Coefficient is libc time divided by rt time.
+    </p>
+    <div class="hero-marks">
+      <span>coef = libc / rt</span>
+      <span>0 failures</span>
+      <span>qsort_neo only</span>
+      <span>median of 21</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="band" id="method">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">00 / Method</span>
+        <h2>One machine, one opponent</h2>
+        <p class="band-eyebrow">verify/run.sh · Darwin arm64 · Apple clang 21.0.0 -O2</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          The host oracle compiles the scalar C with <code>src/aarch64/neon/mem.S</code>
+          and <code>string.S</code>, then times each call against the C library on this
+          Apple M4. Flags are <code>-std=c99 -O2 -Wall -Wextra -Werror
+          -fno-strict-aliasing -fno-builtin</code>. SVE is not available here, and the
+          run skips it. macOS 27.0.1.
+        </p>
+        <p class="en">
+          The libc column is that shipped library. musl, glibc, and the other runtimes
+          in the study are not in this timing. A row is faster when the unrounded
+          coefficient is at least 1.05, parity inside 5 percent, and slower at 0.95 or below.
+          Every printed time in this run is a multiple of 1,000&nbsp;ns.
+        </p>
+      </div>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>Memory</strong><span><code>memcpy</code>, <code>memset</code>, <code>memcmp</code>: 4,096 bytes, 256 iterations, median of 21. <code>memmove</code>: 2,048 bytes, destination 16 bytes into the source, same loop.</span></li>
+          <li><strong>Strings</strong><span><code>strlen</code>, <code>strcmp</code>, <code>strchr</code>, <code>strstr</code>, <code>strcpy</code>: 1,024 iterations, median of 21. <code>strnlen</code> is one loop of 1,024.</span></li>
+          <li><strong>Sort</strong><span><code>qsort_neo</code> on 512 ints, 16 iterations, median of 21. Each iteration copies the input, then sorts. The libc column is <code>qsort</code>. <code>rt_qsort</code> is not called.</span></li>
+          <li><strong>Other</strong><span>Number parsers: one loop of 1,024. <code>snprintf</code>: one loop of 128. Allocator: 256 pairs of a 64-byte allocate and free. <code>strscpy</code> and <code>fmt_f32</code> have no libc twin, so those two rows are not a race.</span></li>
+          <li><strong>Checks</strong><span>The scalar table reports 472 checks and 0 failures. The neon table reports 336 checks and 0 failures. The neon total counts the scalar baseline rows a second time.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>Clock</b> — CLOCK_MONOTONIC, whole loop</span>
+          <span>ns columns are not the time of one call</span>
+        </figcaption>
+      </figure>
+      <p class="caveat">
+        This is a synthetic host oracle on one Apple M4. It is not a SPEC submission.
+        The <code>strcpy</code> row does not call libc <code>strcpy</code>. The buffer is
+        512 bytes with the NUL in the last byte, and the libc side is <code>memcpy</code>
+        of that counted length. <code>rt_strcpy</code> is the function under test, and on
+        this run it is slower. <code>rt_qsort</code> stays in the library. It is absent
+        from the runs and from the tables. The sort row is <code>qsort_neo</code> only.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="wins">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">01 / Faster</span>
+        <h2>Where rt beats the shipped library</h2>
+        <p class="band-eyebrow">Unrounded coef ≥ 1.05 · same numbers as the oracle print</p>
+      </div>
+      <div class="table-lead">
+        <div class="table-lead-kicker">Apple M4 · libSystem</div>
+        <h3 class="table-lead-title">Eleven rows, zero failures</h3>
+        <p>
+          NEON <code>memcmp</code>, <code>strlen</code>, and <code>strcmp</code> are the
+          wide gaps. <code>qsort_neo</code> is 120,000&nbsp;ns against 83,000&nbsp;ns for
+          libc <code>qsort</code> on the same 512-int input.
+          <code>snprintf</code> is 7,000 against 3,000. The pool allocator is 4,000 against
+          1,000 for the 64-byte malloc/free loop. NEON <code>memcpy</code> and
+          <code>strchr</code> win by a single microsecond, which is one step of this printout.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <colgroup>
+            <col style="width:20%">
+            <col style="width:14%">
+            <col style="width:16%">
+            <col style="width:16%">
+            <col style="width:12%">
+            <col style="width:22%">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Function</th>
+              <th>Backend</th>
+              <th class="num">libc ns</th>
+              <th class="num">rt ns</th>
+              <th class="num">Coef</th>
+              <th>Reading</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Function"><code>memcpy</code></td>
+              <td data-label="Backend">neon</td>
+              <td class="num" data-label="libc ns">10,000</td>
+              <td class="num" data-label="rt ns">9,000</td>
+              <td class="num coef-win" data-label="Coef">1.11</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span><span class="fn-note">one microsecond</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>memcmp</code></td>
+              <td data-label="Backend">neon</td>
+              <td class="num" data-label="libc ns">19,000</td>
+              <td class="num" data-label="rt ns">12,000</td>
+              <td class="num coef-win" data-label="Coef">1.58</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strlen</code></td>
+              <td data-label="Backend">neon</td>
+              <td class="num" data-label="libc ns">17,000</td>
+              <td class="num" data-label="rt ns">10,000</td>
+              <td class="num coef-win" data-label="Coef">1.70</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strcmp</code></td>
+              <td data-label="Backend">neon</td>
+              <td class="num" data-label="libc ns">9,000</td>
+              <td class="num" data-label="rt ns">6,000</td>
+              <td class="num coef-win" data-label="Coef">1.50</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strchr</code></td>
+              <td data-label="Backend">neon</td>
+              <td class="num" data-label="libc ns">8,000</td>
+              <td class="num" data-label="rt ns">7,000</td>
+              <td class="num coef-win" data-label="Coef">1.14</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span><span class="fn-note">one microsecond</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>atoi</code></td>
+              <td data-label="Backend">scalar</td>
+              <td class="num" data-label="libc ns">8,000</td>
+              <td class="num" data-label="rt ns">5,000</td>
+              <td class="num coef-win" data-label="Coef">1.60</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strtoul</code></td>
+              <td data-label="Backend">scalar</td>
+              <td class="num" data-label="libc ns">9,000</td>
+              <td class="num" data-label="rt ns">6,000</td>
+              <td class="num coef-win" data-label="Coef">1.50</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strtoull</code></td>
+              <td data-label="Backend">scalar</td>
+              <td class="num" data-label="libc ns">10,000</td>
+              <td class="num" data-label="rt ns">6,000</td>
+              <td class="num coef-win" data-label="Coef">1.67</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>qsort_neo</code></td>
+              <td data-label="Backend">scalar</td>
+              <td class="num" data-label="libc ns">120,000</td>
+              <td class="num" data-label="rt ns">83,000</td>
+              <td class="num coef-win" data-label="Coef">1.45</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span><span class="fn-note">libc column is qsort</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>snprintf</code></td>
+              <td data-label="Backend">scalar</td>
+              <td class="num" data-label="libc ns">7,000</td>
+              <td class="num" data-label="rt ns">3,000</td>
+              <td class="num coef-win" data-label="Coef">2.33</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>alloc</code></td>
+              <td data-label="Backend">scalar</td>
+              <td class="num" data-label="libc ns">4,000</td>
+              <td class="num" data-label="rt ns">1,000</td>
+              <td class="num coef-win" data-label="Coef">4.00</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span><span class="fn-note">pool vs malloc/free</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Wins</b> — coef ≥ 1.05</span>
+          <span>Apple M4 · 2026-11-13</span>
+        </figcaption>
+      </figure>
+      <p class="caveat">
+        The allocator row is a fixed 8,192-byte pool against the system allocator.
+        It is a faster allocate-and-free loop on this input. It is not the same allocator.
+        Numeric, format, and allocator rows are one sample, not a median of 21.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="scalar">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">02 / Scalar</span>
+        <h2>The portable C, including the losses</h2>
+        <p class="band-eyebrow">Apple’s libc is already vector code · scalar loops lose on memory and most strings</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          The scalar backend is the C in <code>src/common/scalar</code>. On this M4 it
+          loses the memory kernels and most of the string kernels to the shipped library.
+          That is the measurement. The NEON objects above are what this machine runs
+          for those calls.
+        </p>
+        <p class="en">
+          <code>strstr</code> prints 1.05. The unrounded ratio is 156,000 / 149,000 = 1.047,
+          inside the parity band, so the row is not counted as a win.
+          <code>memset</code> is 8,000 against 8,000.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <colgroup>
+            <col style="width:22%">
+            <col style="width:18%">
+            <col style="width:18%">
+            <col style="width:14%">
+            <col style="width:28%">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Function</th>
+              <th class="num">libc ns</th>
+              <th class="num">rt ns</th>
+              <th class="num">Coef</th>
+              <th>Reading</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="grp"><td colspan="5">Memory</td></tr>
+            <tr>
+              <td data-label="Function"><code>memcpy</code></td>
+              <td class="num" data-label="libc ns">9,000</td>
+              <td class="num" data-label="rt ns">15,000</td>
+              <td class="num coef-loss" data-label="Coef">0.60</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>memmove</code></td>
+              <td class="num" data-label="libc ns">4,000</td>
+              <td class="num" data-label="rt ns">8,000</td>
+              <td class="num coef-loss" data-label="Coef">0.50</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>memset</code></td>
+              <td class="num" data-label="libc ns">8,000</td>
+              <td class="num" data-label="rt ns">8,000</td>
+              <td class="num coef-tie" data-label="Coef">1.00</td>
+              <td data-label="Reading"><span class="badge badge-gray">Parity</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>memcmp</code></td>
+              <td class="num" data-label="libc ns">19,000</td>
+              <td class="num" data-label="rt ns">32,000</td>
+              <td class="num coef-loss" data-label="Coef">0.59</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr class="grp"><td colspan="5">String</td></tr>
+            <tr>
+              <td data-label="Function"><code>strlen</code></td>
+              <td class="num" data-label="libc ns">17,000</td>
+              <td class="num" data-label="rt ns">39,000</td>
+              <td class="num coef-loss" data-label="Coef">0.44</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strcpy</code><span class="fn-note">libc column is memcpy of 512 bytes</span></td>
+              <td class="num" data-label="libc ns">6,000</td>
+              <td class="num" data-label="rt ns">127,000</td>
+              <td class="num coef-loss" data-label="Coef">0.05</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strcmp</code></td>
+              <td class="num" data-label="libc ns">9,000</td>
+              <td class="num" data-label="rt ns">59,000</td>
+              <td class="num coef-loss" data-label="Coef">0.15</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strchr</code></td>
+              <td class="num" data-label="libc ns">8,000</td>
+              <td class="num" data-label="rt ns">24,000</td>
+              <td class="num coef-loss" data-label="Coef">0.33</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strstr</code><span class="fn-note">unrounded 1.047</span></td>
+              <td class="num" data-label="libc ns">156,000</td>
+              <td class="num" data-label="rt ns">149,000</td>
+              <td class="num coef-tie" data-label="Coef">1.05</td>
+              <td data-label="Reading"><span class="badge badge-gray">Parity</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strnlen</code></td>
+              <td class="num" data-label="libc ns">2,000</td>
+              <td class="num" data-label="rt ns">3,000</td>
+              <td class="num coef-loss" data-label="Coef">0.67</td>
+              <td data-label="Reading"><span class="badge badge-gold">Slower</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strscpy</code><span class="fn-note">no libc strscpy; both columns are 1</span></td>
+              <td class="num" data-label="libc ns">1</td>
+              <td class="num" data-label="rt ns">1</td>
+              <td class="num coef-tie" data-label="Coef">1.00</td>
+              <td data-label="Reading"><span class="badge badge-gray">Not a race</span></td>
+            </tr>
+            <tr class="grp"><td colspan="5">Numeric · sort · format · allocator</td></tr>
+            <tr>
+              <td data-label="Function"><code>atoi</code></td>
+              <td class="num" data-label="libc ns">8,000</td>
+              <td class="num" data-label="rt ns">5,000</td>
+              <td class="num coef-win" data-label="Coef">1.60</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strtoul</code></td>
+              <td class="num" data-label="libc ns">9,000</td>
+              <td class="num" data-label="rt ns">6,000</td>
+              <td class="num coef-win" data-label="Coef">1.50</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strtoull</code></td>
+              <td class="num" data-label="libc ns">10,000</td>
+              <td class="num" data-label="rt ns">6,000</td>
+              <td class="num coef-win" data-label="Coef">1.67</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>qsort_neo</code></td>
+              <td class="num" data-label="libc ns">120,000</td>
+              <td class="num" data-label="rt ns">83,000</td>
+              <td class="num coef-win" data-label="Coef">1.45</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>snprintf</code></td>
+              <td class="num" data-label="libc ns">7,000</td>
+              <td class="num" data-label="rt ns">3,000</td>
+              <td class="num coef-win" data-label="Coef">2.33</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>fmt_f32</code><span class="fn-note">no libc twin; both columns are the rt time</span></td>
+              <td class="num" data-label="libc ns">2,000</td>
+              <td class="num" data-label="rt ns">2,000</td>
+              <td class="num coef-tie" data-label="Coef">1.00</td>
+              <td data-label="Reading"><span class="badge badge-gray">Not a race</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>alloc</code></td>
+              <td class="num" data-label="libc ns">4,000</td>
+              <td class="num" data-label="rt ns">1,000</td>
+              <td class="num coef-win" data-label="Coef">4.00</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Scalar</b> — 472 checks, 0 failures</span>
+          <span>No qsort row</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="neon">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">03 / NEON</span>
+        <h2>The kernels this M4 runs</h2>
+        <p class="band-eyebrow">src/aarch64/neon · memory and string · scalar baseline is the table above</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          The neon objects linked on this machine are <code>memcpy</code>, <code>memset</code>,
+          and <code>memcmp</code>, plus <code>strlen</code>, <code>strcmp</code>, and
+          <code>strchr</code>. There is no neon <code>memmove</code> in that link, so the
+          oracle prints no neon memmove row.
+        </p>
+        <p class="en">
+          The oracle repeats the scalar numeric, sort, format, and allocator rows on the
+          neon table, with the same times. They are one measurement. They are listed once,
+          in the scalar table.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <colgroup>
+            <col style="width:22%">
+            <col style="width:18%">
+            <col style="width:18%">
+            <col style="width:14%">
+            <col style="width:28%">
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Function</th>
+              <th class="num">libc ns</th>
+              <th class="num">rt ns</th>
+              <th class="num">Coef</th>
+              <th>Reading</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="grp"><td colspan="5">Memory · neon</td></tr>
+            <tr>
+              <td data-label="Function"><code>memcpy</code></td>
+              <td class="num" data-label="libc ns">10,000</td>
+              <td class="num" data-label="rt ns">9,000</td>
+              <td class="num coef-win" data-label="Coef">1.11</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>memset</code></td>
+              <td class="num" data-label="libc ns">8,000</td>
+              <td class="num" data-label="rt ns">8,000</td>
+              <td class="num coef-tie" data-label="Coef">1.00</td>
+              <td data-label="Reading"><span class="badge badge-gray">Parity</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>memcmp</code></td>
+              <td class="num" data-label="libc ns">19,000</td>
+              <td class="num" data-label="rt ns">12,000</td>
+              <td class="num coef-win" data-label="Coef">1.58</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr class="grp"><td colspan="5">String · neon</td></tr>
+            <tr>
+              <td data-label="Function"><code>strlen</code></td>
+              <td class="num" data-label="libc ns">17,000</td>
+              <td class="num" data-label="rt ns">10,000</td>
+              <td class="num coef-win" data-label="Coef">1.70</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strcmp</code></td>
+              <td class="num" data-label="libc ns">9,000</td>
+              <td class="num" data-label="rt ns">6,000</td>
+              <td class="num coef-win" data-label="Coef">1.50</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+            <tr>
+              <td data-label="Function"><code>strchr</code></td>
+              <td class="num" data-label="libc ns">8,000</td>
+              <td class="num" data-label="rt ns">7,000</td>
+              <td class="num coef-win" data-label="Coef">1.14</td>
+              <td data-label="Reading"><span class="badge badge-teal">Faster</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>NEON</b> — memory and string only</span>
+          <span>memset ties · no memmove object</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="footer-columns">
+    <div>
+      <h4>Pages</h4>
+      <ul>
+        <li><a href="index.html">Study</a></li>
+        <li><a href="bench.html">Bench</a></li>
+        <li><a href="security.html">SQCSA</a></li>
+        <li><a href="verify.html">Verify</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>This run</h4>
+      <ul>
+        <li>Apple M4 · Darwin arm64</li>
+        <li>macOS 27.0.1</li>
+        <li>Apple clang 21.0.0 · -O2</li>
+        <li>2026-11-13</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Reading</h4>
+      <ul>
+        <li>coef = libc ns / rt ns</li>
+        <li>1.05 and above: faster</li>
+        <li>qsort_neo only</li>
+        <li>strcpy libc side is memcpy</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer-legal">
+    <p class="hold">© 2026 Cryptographic Telesystems, LLC. Ukraine. All rights reserved.</p>
+    <p>btron.pro · B-System C Run-Time · Synthetic host oracle against the C library shipped on this Apple M4.</p>
+  </div>
+</footer>
+
+</body>
+</html>

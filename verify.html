@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binary verification · Coq · B-System RT</title>
+<meta name="description" content="Plan for RT Library binary formal verification in Coq: a small memory-kernel proof, fast typechecking, no proofs checked in this tree yet.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@300;400;500;600&family=Shippori+Mincho:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="rt.css">
+</head>
+<body>
+
+<nav class="sticky" aria-label="Site">
+  <div class="nav-container">
+    <a href="index.html" class="logo">rt<span>BTRON.PRO</span></a>
+    <ul class="nav-links">
+      <li><a href="index.html">Home</a></li>
+      <li><a href="bench.html">Performance</a></li>
+      <li><a href="security.html">Security</a></li>
+      <li><a href="verify.html" aria-current="page">Correctness</a></li>
+    </ul>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-content">
+    <p class="hero-kicker">Binary verification · Coq</p>
+    <h1>Prove the bytes.</h1>
+    <div class="hero-rule"></div>
+    <p class="hero-lede">
+      A plan for the rt memory kernels: one small Coq development that states what
+      the bytes do, assembles them, and typechecks quickly. No proof file is in this
+      tree yet. Nothing here has been checked by <code>coqc</code>.
+    </p>
+    <div class="hero-marks">
+      <span>Coq</span>
+      <span>Small kernel</span>
+      <span>Fast coqc</span>
+      <span>i386 REP first</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="band" id="orient">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">00 / Orient</span>
+        <h2>Three papers, one shape</h2>
+        <p class="band-eyebrow">Coq for the proofs we will write · HOL4 named where it was HOL4</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          The orienting system is Coq. The goal is a kernel a person can read, and a
+          check that stays fast. If a change makes <code>coqc</code> slow, the change
+          is too big.
+        </p>
+        <p class="en">
+          Lean 4 is out of scope. CompCert, VST, Iris, and a full C parser are out of
+          scope for the same reason: they are larger than the library they would be
+          asked to justify.
+        </p>
+      </div>
+      <div class="card-grid">
+        <article class="card-item">
+          <div class="card-kicker">PPDP 2013 · Coq</div>
+          <h3>CoqASM</h3>
+          <p>
+            Andrew Kennedy, Nick Benton, Jonas B. Jensen, and Pierre-Évariste Dagand,
+            “Coq: The World’s Best Macro Assembler?”, PPDP 2013.
+            A subset of x86 is modelled in Coq. Notations accept ordinary assembly.
+            The assembler produces hex bytes inside Coq, with a correctness theorem
+            from those bytes to a separation-logic formula.
+          </p>
+        </article>
+        <article class="card-item">
+          <div class="card-kicker">TPHOLs 2009 · HOL4</div>
+          <h3>Verified Lisp, the shape</h3>
+          <p>
+            Magnus O. Myreen and Michael J. C. Gordon, “Verified LISP Implementations
+            on ARM, x86 and PowerPC”, TPHOLs 2009, LNCS 5674.
+            Machine-code interpreters for the core of Lisp 1.5, on top of a verified
+            allocator and collector. The proofs are in HOL4, not Coq. We take the
+            shape: a small program, proved down to the instruction, not the system.
+          </p>
+        </article>
+        <article class="card-item">
+          <div class="card-kicker">Proc. IEEE 2005 · CoqPL 2021</div>
+          <h3>SPIRAL, a subset</h3>
+          <p>
+            Markus Püschel and colleagues, “SPIRAL: Code Generation for DSP Transforms”,
+            Proceedings of the IEEE, 2005. Algorithms are sparse factorizations in SPL,
+            rewritten, then emitted as code.
+            Patrick Brinich and Jeremy Johnson, CoqPL 2021, verified a subset of that
+            pipeline in Coq. We take one rewrite: aligned head, a vector body, a tail.
+          </p>
+        </article>
+      </div>
+      <p class="caveat">
+        CoqASM uses type classes and maps concrete bytes into the SSReflect library.
+        This plan does not. No type classes, no MathComp, no SSReflect. The part we
+        keep is the one that fits a small kernel: bytes computed inside Coq, a short
+        statement that those bytes implement the spec, and notations only where they
+        stay readable.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="rule">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">01 / Rule</span>
+        <h2>Small, and fast to check</h2>
+        <p class="band-eyebrow">One file at a time · vm_compute on a handful of lengths</p>
+      </div>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>Kernel</strong><span>Functional specs of <code>memcpy</code>, <code>memmove</code>, <code>memset</code>, and <code>memcmp</code>. No extractor standing in for a proof. No C parser.</span></li>
+          <li><strong>Check</strong><span><code>vm_compute</code> on lengths 0, 1, 7, 8, and 16, the sizes the host oracle already treats as edges.</span></li>
+          <li><strong>Stop rule</strong><span>If <code>coqc</code> gets slow, delete the abstraction that caused it. Do not add a CI job that hides the cost.</span></li>
+          <li><strong>Not yet</strong><span>There is no <code>coq/</code> directory. Adding an empty one would pretend a proof exists.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>Status</b> — plan only</span>
+          <span>Host oracle and make security stay the checks that run today</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="phases">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">02 / Phases</span>
+        <h2>Order of work</h2>
+        <p class="band-eyebrow">Memory before strings · i386 REP before AVX-512</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          Each phase is one claim a reader can hold in their head. A later phase
+          does not start by widening the logic. It starts by naming the next
+          instruction sequence.
+        </p>
+        <p class="en">
+          The first machine-code target is the i386 string move and store in
+          <code>src/i386/rep/mem.s</code> (<code>rep movsb</code>, <code>rep stosb</code>).
+          That file is smaller than a NEON or AVX-512 body, and the bytes are obvious.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Phase</th>
+              <th>Artifact</th>
+              <th>Claim</th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Phase">0</td>
+              <td data-label="Artifact">Host oracle, <code>make security</code></td>
+              <td data-label="Claim">Behaviour against the shipped C library, and a clean static scan of the C.</td>
+              <td data-label="State"><span class="badge badge-teal">Running</span></td>
+            </tr>
+            <tr>
+              <td data-label="Phase">1</td>
+              <td data-label="Artifact"><code>coq/MemSpec.v</code></td>
+              <td data-label="Claim">Four memory operations as functions on lists of bytes. Overlap for <code>memmove</code> is part of the spec.</td>
+              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+            </tr>
+            <tr>
+              <td data-label="Phase">2</td>
+              <td data-label="Artifact"><code>src/i386/rep/mem.s</code></td>
+              <td data-label="Claim">The assembled bytes of <code>rep movsb</code> and <code>rep stosb</code> meet MemSpec on the lengths above.</td>
+              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+            </tr>
+            <tr>
+              <td data-label="Phase">3</td>
+              <td data-label="Artifact">Scalar word loops</td>
+              <td data-label="Claim">The word-wise loops as Coq functions, proved equal to MemSpec. The C source is not parsed.</td>
+              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+            </tr>
+            <tr>
+              <td data-label="Phase">4</td>
+              <td data-label="Artifact">One vector body</td>
+              <td data-label="Claim">SSE2 or NEON, and only the opcodes that file already uses.</td>
+              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+            </tr>
+            <tr>
+              <td data-label="Phase">5</td>
+              <td data-label="Artifact">One SPL-style split</td>
+              <td data-label="Claim">Head to alignment, then <em>k</em> vector widths, then a tail. The three pieces compose to MemSpec.</td>
+              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Sequence</b> — memory kernels only</span>
+          <span>Strings that walk to NUL come after phase 5</span>
+        </figcaption>
+      </figure>
+      <p class="caveat">
+        <code>stdio</code>, <code>qsort</code>, <code>qsort_neo</code>, and the allocator
+        stay on the host oracle. They are not in the first Coq files.
+        Lifting an existing binary with a decompiler, the way later tools do for a
+        routine such as glibc <code>strlen</code>, is a check that can follow this
+        kernel. It is not a substitute for it.
+      </p>
+    </div>
+  </section>
+
+  <section class="band" id="today">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">03 / Today</span>
+        <h2>What already runs</h2>
+        <p class="band-eyebrow">Oracle for behaviour · SQCSA for the C · no coqc job</p>
+      </div>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>Behaviour</strong><span><a href="bench.html">bench.html</a> publishes the host oracle: rt against the C library on this machine. Coefficient is libc time over rt time.</span></li>
+          <li><strong>C scan</strong><span><a href="security.html">security.html</a> is <code>make security</code>. That gate does not read the assembly, and it does not discharge a proof.</span></li>
+          <li><strong>Not in CI</strong><span>No <code>coqc</code> step. Adding one before phase 1 would check an empty directory.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>Boundary</b> — a page is not a proof</span>
+          <span>verify.html</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site">
+  <div class="footer-columns">
+    <div>
+      <h4>Pages</h4>
+      <ul>
+        <li><a href="index.html">Study</a></li>
+        <li><a href="bench.html">Bench</a></li>
+        <li><a href="security.html">SQCSA</a></li>
+        <li><a href="verify.html">Verify</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Orienting work</h4>
+      <ul>
+        <li>Kennedy, Benton, Jensen, Dagand, PPDP 2013</li>
+        <li>Myreen and Gordon, TPHOLs 2009 (HOL4)</li>
+        <li>Püschel et al., Proc. IEEE 2005</li>
+        <li>Brinich and Johnson, CoqPL 2021</li>
+      </ul>
+    </div>
+    <div>
+      <h4>First target</h4>
+      <ul>
+        <li>src/i386/rep/mem.s</li>
+        <li>rep movsb / rep stosb</li>
+        <li>MemSpec, when it exists</li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer-legal">
+    <p class="hold">© 2026 Cryptographic Telesystems, LLC. Ukraine. All rights reserved.</p>
+    <p>btron.pro · B-System C Run-Time · This page is the plan. It is not a checked proof.</p>
+  </div>
+</footer>
+
+</body>
+</html>

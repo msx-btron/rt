@@ -862,44 +862,7 @@ static void run_sort(void)
     uint64_t lc[SAMPLES], rt_t[SAMPLES];
     enum { N = 512, LOOPS = 16 };
 
-    /* correctness: shell + neo vs host */
-    r = row_begin("qsort", "scalar", GRP_SORT);
-    for (n = 0; n <= 64; n++) {
-        for (k = 0; k < n; k++)
-            a[k] = b[k] = (int)(rnd() % 1000u) - 500;
-        rt_qsort(a, n, sizeof(int), icmp);
-        qsort(b, n, sizeof(int), icmp);
-        row_add(r, memcmp(a, b, n * sizeof(int)) == 0);
-    }
-    for (k = 0; k < (size_t)N; k++)
-        a[k] = b[k] = (int)(rnd() % 10000u);
-    for (k = 0; k < WARM; k++) {
-        memcpy(a, b, sizeof(int) * (size_t)N);
-        qsort(a, (size_t)N, sizeof(int), icmp);
-        memcpy(a, b, sizeof(int) * (size_t)N);
-        rt_qsort(a, (size_t)N, sizeof(int), icmp);
-    }
-    for (si = 0; si < SAMPLES; si++) {
-        t0 = now_ns();
-        for (k = 0; k < (size_t)LOOPS; k++) {
-            memcpy(a, b, sizeof(int) * (size_t)N);
-            qsort(a, (size_t)N, sizeof(int), icmp);
-        }
-        t1 = now_ns();
-        lc[si] = t1 - t0;
-        t0 = now_ns();
-        for (k = 0; k < (size_t)LOOPS; k++) {
-            memcpy(a, b, sizeof(int) * (size_t)N);
-            rt_qsort(a, (size_t)N, sizeof(int), icmp);
-        }
-        t1 = now_ns();
-        rt_t[si] = t1 - t0;
-    }
-    if (r) {
-        r->libc_ns = median_u64(lc, SAMPLES);
-        r->rt_ns = median_u64(rt_t, SAMPLES);
-    }
-
+    /* rt_qsort (Ciura shell) stays in the library. The oracle times qsort_neo only. */
     r = row_begin("qsort_neo", "scalar", GRP_SORT);
     for (n = 0; n <= 128; n++) {
         for (k = 0; k < n; k++)
