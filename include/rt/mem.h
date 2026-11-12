@@ -22,6 +22,7 @@
 */
 
 void *rt_memcpy_scalar(void *dst, const void *src, size_t n);
+void *rt_memmove_scalar(void *dst, const void *src, size_t n);
 void *rt_memset_scalar(void *dst, int c, size_t n);
 int   rt_memcmp_scalar(const void *a, const void *b, size_t n);
 

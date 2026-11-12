@@ -39,6 +39,22 @@ void *rt_memcpy_scalar(void *dst, const void *src, size_t n)
     return dst;
 }
 
+void *rt_memmove_scalar(void *dst, const void *src, size_t n)
+{
+    unsigned char *d = (unsigned char *)dst;
+    const unsigned char *s = (const unsigned char *)src;
+
+    if (d == s || n == 0)
+        return dst;
+    if (d < s)
+        return rt_memcpy_scalar(dst, src, n);
+
+    /* Copy backward for overlapping regions. */
+    while (n--)
+        d[n] = s[n];
+    return dst;
+}
+
 void *rt_memset_scalar(void *dst, int c, size_t n)
 {
     unsigned char *d = (unsigned char *)dst;
