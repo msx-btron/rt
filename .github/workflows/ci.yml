@@ -37,7 +37,7 @@ jobs:
   # i386 ladder under qemu-i386: 386 / MMX / SSE (+ assemble PC-98)
   # ------------------------------------------------------------------
   i386-qemu:
-    name: IA-32 MMX/SSE/REP
+    name: IA-32 REP/MMX/SSE
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
