@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Binary verification · Coq · B-System RT</title>
-<meta name="description" content="Plan for RT Library binary formal verification in Coq: a small memory-kernel proof, fast typechecking, no proofs checked in this tree yet.">
+<meta name="description" content="RT Library binary formal verification in Coq. rt_memset_neon is checked for every fill byte and every length below 2^64. The other kernels are still a plan.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@300;400;500;600&family=Shippori+Mincho:wght@500;600;700&display=swap" rel="stylesheet">
@@ -31,8 +31,10 @@
     <div class="hero-rule"></div>
     <p class="hero-lede">
       A plan for the rt memory kernels, and one proof that is already checked.
-      <code>make verify</code> runs Coq on the 16-byte NEON store in
-      <code>rt_memset_neon</code>. The rest of the plan is not proved yet.
+      <code>make verify</code> runs Coq on <code>rt_memset_neon</code> for every
+      fill byte and every length below 2<sup>64</sup>. The returned pointer is
+      the start of the buffer, address 0 in this model. <code>memcpy</code>,
+      <code>memcmp</code>, and the rest of the plan are still open.
     </p>
     <div class="hero-marks">
       <span>Coq</span>
@@ -114,18 +116,18 @@
       <div class="band-head">
         <span class="band-index">01 / Rule</span>
         <h2>Small, and fast to check</h2>
-        <p class="band-eyebrow">One file at a time · vm_compute on a handful of lengths</p>
+        <p class="band-eyebrow">One file · induction on the 64-byte and 16-byte loops</p>
       </div>
       <figure class="plate">
         <ul class="spec">
           <li><strong>Kernel</strong><span>Functional specs of <code>memcpy</code>, <code>memmove</code>, <code>memset</code>, and <code>memcmp</code>. No extractor standing in for a proof. No C parser.</span></li>
-          <li><strong>Check</strong><span><code>vm_compute</code> on lengths 0, 1, 7, 8, and 16, the sizes the host oracle already treats as edges.</span></li>
+          <li><strong>Check</strong><span>The memset proof inducts on the 64-byte loop and the 16-byte loop. Finite <code>vm_compute</code> covers the 256 fill bytes, the bit tests under 16, and the decoded words.</span></li>
           <li><strong>Stop rule</strong><span>If <code>coqc</code> gets slow, delete the abstraction that caused it. Do not add a CI job that hides the cost.</span></li>
-          <li><strong>Checked</strong><span><code>coq/MemsetNeon.v</code> is the bytes of <code>rt_memset_neon</code> for <code>n = 16</code>. One <code>dup.2d</code> and one <code>str q0</code>. Every fill byte from 0 to 255. <code>make verify</code> is <code>coqc</code> on that file.</span></li>
+          <li><strong>Checked</strong><span><code>coq/MemsetNeon.v</code> is the bytes of <code>rt_memset_neon</code>. Every fill byte from 0 to 255, every length below 2<sup>64</sup>. The routine writes that many copies of the byte and returns the original pointer. In this model the buffer starts at address 0, so the returned <code>x0</code> is 0. <code>make verify</code> is <code>coqc</code> on that file.</span></li>
         </ul>
         <figcaption>
-          <span><b>Status</b> — n = 16 checked</span>
-          <span>Other lengths, and the other kernels, are still open</span>
+          <span><b>Status</b> — every n below 2<sup>64</sup> checked</span>
+          <span>memcpy, memcmp, and phases 1–5 are still open</span>
         </figcaption>
       </figure>
     </div>
@@ -225,7 +227,7 @@
         <ul class="spec">
           <li><strong>Behaviour</strong><span><a href="bench.html">bench.html</a> publishes the host oracle: rt against the C library on this machine. Coefficient is libc time over rt time.</span></li>
           <li><strong>C scan</strong><span><a href="security.html">security.html</a> is <code>make security</code>. That gate does not read the assembly, and it does not discharge a proof.</span></li>
-          <li><strong>Coq</strong><span><code>make verify</code> checks <code>coq/MemsetNeon.v</code>. The GitHub workflow does not run <code>coqc</code> yet.</span></li>
+          <li><strong>Coq</strong><span><code>make verify</code> checks <code>coq/MemsetNeon.v</code>: <code>rt_memset_neon</code> for every length below 2<sup>64</sup>. The GitHub workflow does not run <code>coqc</code> yet.</span></li>
         </ul>
         <figcaption>
           <span><b>Boundary</b> — a page is not a proof</span>
