@@ -169,6 +169,16 @@ static int have_mmx(void)
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
     return (edx & (1u << 23)) != 0;
 }
+
+static int have_sse(void)
+{
+    unsigned eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+    if (eax < 1)
+        return 0;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+    return (edx & (1u << 25)) != 0;
+}
 #elif defined(__x86_64__)
 static unsigned long long xcr0(void)
 {
@@ -216,6 +226,10 @@ int main(void)
         exercise("mmx", rt_memcpy_mmx, rt_memset_mmx, rt_memcmp_mmx);
     else
         printf("skip mmx\n");
+    if (have_sse())
+        exercise("sse", rt_memcpy_sse, rt_memset_sse, rt_memcmp_sse);
+    else
+        printf("skip sse\n");
 #elif defined(__x86_64__)
     exercise("scalar", rt_memcpy_scalar, rt_memset_scalar, rt_memcmp_scalar);
     exercise("sse2", rt_memcpy_sse2, rt_memset_sse2, rt_memcmp_sse2);

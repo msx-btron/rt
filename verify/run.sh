@@ -15,6 +15,7 @@ asm32() {
     "$cc" -m32 -c -o build/i386_mmx.o ../src/i386/mmx/mem.s
     "$cc" -m32 -c -o build/i386_pc98.o ../src/i386/pc98/mem.s
     "$cc" -m32 -c -o build/i386_pc98_real.o ../src/i386/pc98/mem16.s
+    "$cc" -m32 -c -o build/i386_sse.o ../src/i386/sse/mem.s
     echo "asmcheck ok"
 }
 
@@ -32,7 +33,8 @@ Linux:x86_64:test32)
         ../src/common/scalar/mem.c \
         ../src/i386/rep/mem.s \
         ../src/i386/mmx/mem.s \
-        ../src/i386/pc98/mem.s
+        ../src/i386/pc98/mem.s \
+        ../src/i386/sse/mem.s
     ./build/test_mem32
     ;;
 Linux:x86_64:*)

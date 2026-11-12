@@ -13,11 +13,12 @@
      pc98       same RAM path, plus 16-bit VRAM path (MOVSW/STOSW)
      pc98 real  .code16 helpers, BIOS register convention, not the ELF ABI
      mmx        Pentium MMX movq, EMMS on every exit that touched MMX
+     sse        i386 XMM movups/movaps (Pentium III; no SSE2 integer ops)
      sse2       x86-64, 16-byte, dest-aligned movdqa
      avx2       x86-64, 32-byte, vzeroupper on every return
      avx512     x86-64, 64-byte ZMM, AVX-512F+BW; leaves ZMM state dirty
      neon/sve   AArch64
-     rvv        RV64 V, m8, e8
+     rvv        RV32 or RV64 V, m8 e8 (one object per XLEN)
 */
 
 void *rt_memcpy_scalar(void *dst, const void *src, size_t n);
@@ -37,6 +38,10 @@ void *rt_memset_pc98_vram(void *dst, int c, size_t n);
 void *rt_memcpy_mmx(void *dst, const void *src, size_t n);
 void *rt_memset_mmx(void *dst, int c, size_t n);
 int   rt_memcmp_mmx(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_sse(void *dst, const void *src, size_t n);
+void *rt_memset_sse(void *dst, int c, size_t n);
+int   rt_memcmp_sse(const void *a, const void *b, size_t n);
 
 void *rt_memcpy_sse2(void *dst, const void *src, size_t n);
 void *rt_memset_sse2(void *dst, int c, size_t n);
