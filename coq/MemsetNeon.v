@@ -867,3 +867,85 @@ Proof.
   replace (orrv 0 0 0 64) with 0 by (vm_compute; reflexivity).
   reflexivity.
 Qed.
+(* --- any length: one-step facts --- *)
+
+Lemma eqb0_nat : forall n, N.eqb (N.of_nat n) 0 = (n =? 0)%nat.
+Proof. intros n. change 0 with (N.of_nat 0). apply eqb_nat. Qed.
+
+Lemma of_nat_byte : forall bn, (bn < 256)%nat -> N.of_nat bn < 256.
+Proof. intros bn H. apply of_nat_lt_mono in H. exact H. Qed.
+
+Lemma zadd_0 : forall a, zadd a 0%Z = a.
+Proof. intros a. unfold zadd. rewrite Z.add_0_r. apply N2Z.id. Qed.
+
+Lemma zadd16 : forall base,
+  zadd (N.of_nat base) 16%Z = N.of_nat (base + 16).
+Proof. intros base. rewrite <- (zadd_nat base 16). reflexivity. Qed.
+
+Lemma zadd32 : forall base,
+  zadd (N.of_nat base) 32%Z = N.of_nat (base + 32).
+Proof. intros base. rewrite <- (zadd_nat base 32). reflexivity. Qed.
+
+Lemma zadd8 : forall base,
+  zadd (N.of_nat base) 8%Z = N.of_nat (base + 8).
+Proof. intros base. rewrite <- (zadd_nat base 8). reflexivity. Qed.
+
+Lemma zadd4 : forall base,
+  zadd (N.of_nat base) 4%Z = N.of_nat (base + 4).
+Proof. intros base. rewrite <- (zadd_nat base 4). reflexivity. Qed.
+
+Lemma zadd2 : forall base,
+  zadd (N.of_nat base) 2%Z = N.of_nat (base + 2).
+Proof. intros base. rewrite <- (zadd_nat base 2). reflexivity. Qed.
+
+Lemma le_bytes_16 : forall b,
+  b < 256 ->
+  le_bytes (splatb b) 8 ++ le_bytes (splatb b) 8 = repeat b 16.
+Proof.
+  intros b Hb.
+  rewrite !le_bytes_splat8 by exact Hb.
+  rewrite repeat_add. reflexivity.
+Qed.
+
+Definition canon (bn : N) (filled rest : nat) (p : N) (c z qs : bool) : Mach :=
+  Mk (N.of_nat filled) (lowb bn) (N.of_nat rest) (splatb bn) 0
+     (splatb bn) (splatb bn)
+     (repeat bn filled ++ repeat 0 rest)
+     p c z false qs.
+
+Lemma canon_done : forall bn filled rest p c z qs,
+  (canon bn filled rest p c z qs).(done) = false.
+Proof. reflexivity. Qed.
+
+(* stp q0, q0, [x0] at pc 48: 32 bytes, pointer stays. *)
+Lemma stp48 : forall b filled rest c z qs,
+  b < 256 ->
+  (32 <= rest)%nat ->
+  step_at (canon b filled rest 48 c z qs) =
+  Some (Mk (N.of_nat filled) (lowb b) (N.of_nat rest) (splatb b) 0
+           (splatb b) (splatb b)
+           (repeat b (filled + 32) ++ repeat 0 (rest - 32))
+           52 c z false true).
+Proof.
+  intros b filled rest c z qs Hb Hrest.
+  unfold canon, step_at.
+  cbn [pc].
+  red_at 48.
+  cbn iota beta.
+  unfold step.
+  cbn [getr lo hi mem r0 pc N.eqb andb negb].
+  rewrite zadd_0. rewrite Nat2N.id.
+  replace (le_bytes (splatb b) 8 ++ le_bytes (splatb b) 8) with (repeat b 16)
+    by (symmetry; apply le_bytes_16; exact Hb).
+  assert (H16 : (16 <= rest)%nat) by lia.
+  rewrite (write_block 16 b filled rest H16).
+  cbn iota.
+  rewrite zadd16.
+  rewrite Nat2N.id.
+  rewrite (write_block 16 b (filled + 16) (rest - 16)) by lia.
+  cbn iota.
+  cbn [setmem].
+  replace (filled + 16 + 16)%nat with (filled + 32)%nat by lia.
+  replace (rest - 16 - 16)%nat with (rest - 32)%nat by lia.
+  reflexivity.
+Qed.
