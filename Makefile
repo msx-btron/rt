@@ -4,8 +4,9 @@
 # Linux x86_64: make       → scalar + sse2/avx2/avx512 tables
 # Linux + qemu: make qemu  → pentium2 + pentium3 tables
 # make security            → clang --analyze, flawfinder, cppcheck, ASCII report
+# make verify              → coqc coq/MemsetNeon.v (rt_memset_neon, n = 16)
 #
-.PHONY: all test test32 qemu qemu-p2 qemu-p3 clean \
+.PHONY: all test test32 qemu qemu-p2 qemu-p3 clean verify \
 	security security-report sec-scalar sec-verify
 
 all: test
@@ -25,8 +26,18 @@ qemu-p3:
 qemu-p2:
 	$(MAKE) -C verify qemu-p2
 
+# Coq check. One file: the 16-byte NEON store in rt_memset_neon.
+COQC ?= coqc
+
+verify:
+	@command -v $(COQC) >/dev/null 2>&1 || { echo "coqc not on PATH"; exit 1; }
+	@echo "verify: coqc coq/MemsetNeon.v"
+	@$(COQC) coq/MemsetNeon.v
+	@echo "verify: rt_memset_neon n=16 checked"
+
 clean:
 	$(MAKE) -C verify clean
+	rm -f coq/*.vo coq/*.vos coq/*.vok coq/*.glob coq/*.vo.aux
 
 # ── Security and quality static analysis ─────────────────────────────────────
 # Same tools as bitedits/btron `make security`: clang --analyze, flawfinder
