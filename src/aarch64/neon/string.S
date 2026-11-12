@@ -1,4 +1,6 @@
-/* AArch64 NEON strlen / strcmp / strchr */
+/* AArch64 NEON strlen / strcmp / strchr
+   Match masks from cmeq are 0xFF (hit) / 0x00 (miss).
+   Use umaxv to test "any hit"; uminv only for "all equal". */
 
 .text
 
@@ -21,8 +23,9 @@ SYM(rt_strlen_neon):
     mov x3, #16
     sub x2, x3, x2
 .Ls_hd:
-    ldrb w3, [x0], #1
+    ldrb w3, [x0]
     cbz w3, .Ls_done
+    add x0, x0, #1
     subs x2, x2, #1
     b.ne .Ls_hd
 .Ls_al:
@@ -30,7 +33,7 @@ SYM(rt_strlen_neon):
 .Ls_lp:
     ldr q0, [x0]
     cmeq v1.16b, v0.16b, #0
-    uminv b2, v1.16b
+    umaxv b2, v1.16b            /* any NUL? max==0xFF */
     umov w3, v2.b[0]
     cbnz w3, .Ls_blk
     add x0, x0, #16
@@ -60,23 +63,26 @@ SYM(rt_strcmp_neon):
     ldr q0, [x0]
     ldr q1, [x1]
     cmeq v2.16b, v0.16b, v1.16b
-    uminv b3, v2.16b
+    uminv b3, v2.16b            /* all equal? min==0xFF */
     umov w2, v3.b[0]
     cmp w2, #0xff
     b.ne .Lsc_byte
     cmeq v2.16b, v0.16b, #0
-    uminv b3, v2.16b
+    umaxv b3, v2.16b            /* any NUL? */
     umov w2, v3.b[0]
     cbnz w2, .Lsc_eq
     add x0, x0, #16
     add x1, x1, #16
     b .Lsc_lp
 .Lsc_byte:
-    ldrb w2, [x0], #1
-    ldrb w3, [x1], #1
+    ldrb w2, [x0]
+    ldrb w3, [x1]
     subs w2, w2, w3
     b.ne .Lsc_ret
-    cbnz w3, .Lsc_byte
+    cbz w3, .Lsc_eq
+    add x0, x0, #1
+    add x1, x1, #1
+    b .Lsc_byte
 .Lsc_eq:
     mov w0, #0
     ret
@@ -98,10 +104,11 @@ SYM(rt_strchr_neon):
     mov x3, #16
     sub x2, x3, x2
 .Lch_hd:
-    ldrb w3, [x0], #1
+    ldrb w3, [x0]
     cmp w3, w1
-    b.eq .Lch_hit
+    b.eq .Lch_ret
     cbz w3, .Lch_none
+    add x0, x0, #1
     subs x2, x2, #1
     b.ne .Lch_hd
 .Lch_al:
@@ -111,7 +118,7 @@ SYM(rt_strchr_neon):
     cmeq v2.16b, v0.16b, v1.16b
     cmeq v3.16b, v0.16b, #0
     orr v4.16b, v2.16b, v3.16b
-    uminv b5, v4.16b
+    umaxv b5, v4.16b            /* any match or NUL? */
     umov w3, v5.b[0]
     cbnz w3, .Lch_blk
     add x0, x0, #16
@@ -130,9 +137,7 @@ SYM(rt_strchr_neon):
     b .Lch_lp
 2:
     add x0, x0, x2
-    ret
-.Lch_hit:
-    sub x0, x0, #1
+.Lch_ret:
     ret
 .Lch_none:
     mov x0, #0

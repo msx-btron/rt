@@ -172,9 +172,9 @@ static void print_one_backend(const char *backend)
         printf("%s(Memory/String vector = %s · other groups = scalar baseline)%s\n",
                g_color ? C_DIM : "", backend, g_color ? C_RESET : "");
 
-    printf("+------------------+----------+----------+--------+------+----------+\n");
-    printf("| function         | libc ns  | rt ns    | checks | fail | coef     |\n");
-    printf("+------------------+----------+----------+--------+------+----------+\n");
+    printf("+------------------+----------+----------+--------+------+------------+\n");
+    printf("| function         | libc ns  | rt ns    | checks | fail | coef       |\n");
+    printf("+------------------+----------+----------+--------+------+------------+\n");
 
     for (g = 0; g < GRP_COUNT; g++) {
         int has = 0;
@@ -205,7 +205,7 @@ static void print_one_backend(const char *backend)
             else
                 coef_col = g_color ? C_YELLOW : "";
 
-            printf("| %s%-16s%s | %8llu | %8llu | %6u | %s%4u%s | %s%6s%s |\n",
+            printf("| %s%-16s%s | %8llu | %8llu | %6u | %s%4u%s | %s%8s%s |\n",
                    name_col, r->name, g_color ? C_RESET : "",
                    (unsigned long long)r->libc_ns,
                    (unsigned long long)r->rt_ns,
@@ -217,12 +217,12 @@ static void print_one_backend(const char *backend)
         }
     }
 
-    printf("+------------------+----------+----------+--------+------+----------+\n");
-    printf("| TOTAL            |          |          | %6u | %s%4u%s |          |\n",
+    printf("+------------------+----------+----------+--------+------+------------+\n");
+    printf("| TOTAL            |          |          | %6u | %s%4u%s |            |\n",
            tc,
            tf ? (g_color ? C_RED : "") : (g_color ? C_GREEN : ""),
            tf, g_color ? C_RESET : "");
-    printf("+------------------+----------+----------+--------+------+----------+\n");
+    printf("+------------------+----------+----------+--------+------+------------+\n");
 }
 
 static void print_report(void)
@@ -472,6 +472,9 @@ static void bench_strlen_fn(struct row *r, strlen_fn fn)
 
     row_add(r, fn(s) == strlen(s));
     row_add(r, fn("") == 0);
+    row_add(r, fn("a") == 1);
+    row_add(r, fn("0123456789abcdef") == 16); /* exactly one NEON block */
+    row_add(r, fn("0123456789abcdefZ") == 17);
 
     for (k = 0; k < WARM; k++) {
         sink += strlen(s);
@@ -539,6 +542,9 @@ static void bench_strchr_fn(struct row *r, strchr_fn fn)
 
     row_add(r, fn(s, 'Z') == strchr(s, 'Z'));
     row_add(r, fn(s, 'Q') == strchr(s, 'Q'));
+    row_add(r, fn(s, 0) == strchr(s, 0));
+    row_add(r, fn("", 'a') == strchr("", 'a'));
+    row_add(r, fn("x", 'x') == strchr("x", 'x'));
 
     for (k = 0; k < WARM; k++) {
         sink = strchr(s, 'Z');
