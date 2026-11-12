@@ -48,9 +48,6 @@ enum group {
     GRP_COUNT
 };
 
-static const char *grp_name[GRP_COUNT] = {
-    "Memory", "String", "Numeric", "Sort", "Format", "Allocator"
-};
 static const char *grp_color[GRP_COUNT] = {
     C_CYAN, C_GREEN, C_YELLOW, C_MAGENTA, C_BLUE, C_RED
 };
@@ -131,45 +128,75 @@ static double coef(const struct row *r)
     return (double)r->libc_ns / (double)r->rt_ns;
 }
 
-static void print_report(void)
+/* Row belongs in this backend's full-scope table:
+   - Memory: this backend only
+   - String: this backend's rows if any, plus scalar-only string fns when backend is scalar
+   - Other groups: scalar baseline (shown on every table) */
+static int row_in_backend_table(const struct row *r, const char *backend)
+{
+    if (r->group == GRP_MEMORY)
+        return strcmp(r->backend, backend) == 0;
+    if (r->group == GRP_STRING) {
+        if (strcmp(r->backend, backend) == 0)
+            return 1;
+        /* scalar-only string helpers appear only on scalar table */
+        if (strcmp(backend, "scalar") == 0 && strcmp(r->backend, "scalar") == 0)
+            return 1;
+        return 0;
+    }
+    /* Numeric / Sort / Format / Allocator: scalar baseline on every table */
+    return strcmp(r->backend, "scalar") == 0;
+}
+
+static void print_one_backend(const char *backend)
 {
     int i, g;
     unsigned tc = 0, tf = 0;
-    int shown_grp[GRP_COUNT];
-    memset(shown_grp, 0, sizeof shown_grp);
+    int any = 0;
 
-    printf("\n");
+    for (i = 0; i < g_nrows; i++) {
+        if (row_in_backend_table(&g_rows[i], backend)) {
+            any = 1;
+            break;
+        }
+    }
+    if (!any)
+        return;
+
     if (g_color)
-        printf("%s+------------------------------------------------------------------------------+%s\n", C_BOLD, C_RESET);
+        printf("\n%s%s══ backend: %-8s ══%s\n", C_BOLD, C_WHITE, backend, C_RESET);
     else
-        printf("+------------------------------------------------------------------------------+\n");
-    printf("| rt host oracle — libc vs rt (nanoseconds)  coef>1 = rt faster                |\n");
-    printf("+------------------+--------+----------+----------+--------+--------+----------+\n");
-    printf("| function         | backend| libc ns  | rt ns    | checks | fail   | coef     |\n");
-    printf("+------------------+--------+----------+----------+--------+--------+----------+\n");
+        printf("\n== backend: %s ==\n", backend);
+
+    if (strcmp(backend, "scalar") != 0)
+        printf("%s(Memory/String vector = %s · other groups = scalar baseline)%s\n",
+               g_color ? C_DIM : "", backend, g_color ? C_RESET : "");
+
+    printf("+------------------+----------+----------+--------+------+----------+\n");
+    printf("| function         | libc ns  | rt ns    | checks | fail | coef     |\n");
+    printf("+------------------+----------+----------+--------+------+----------+\n");
 
     for (g = 0; g < GRP_COUNT; g++) {
-        int any = 0;
-        for (i = 0; i < g_nrows; i++)
-            if (g_rows[i].group == g) { any = 1; break; }
-        if (!any) continue;
-
-        /* group header row */
-        if (g_color)
-            printf("| %s%s%-14s%s  |        |          |          |        |        |          |\n",
-                   C_BOLD, grp_color[g], grp_name[g], C_RESET);
-        else
-            printf("| [%-14s] |        |          |          |        |        |          |\n",
-                   grp_name[g]);
+        int has = 0;
+        for (i = 0; i < g_nrows; i++) {
+            if (row_in_backend_table(&g_rows[i], backend) && g_rows[i].group == g) {
+                has = 1;
+                break;
+            }
+        }
+        if (!has)
+            continue;
 
         for (i = 0; i < g_nrows; i++) {
             struct row *r = &g_rows[i];
             double c;
-            const char *st_col, *coef_col;
+            const char *st_col, *coef_col, *name_col;
             char coef_s[16];
-            if (r->group != g) continue;
+            if (!row_in_backend_table(r, backend) || r->group != g)
+                continue;
             c = coef(r);
             snprintf(coef_s, sizeof coef_s, "%.2f", c);
+            name_col = g_color ? grp_color[g] : "";
             st_col = r->fails ? (g_color ? C_RED : "") : (g_color ? C_GREEN : "");
             if (c >= 1.05)
                 coef_col = g_color ? C_GREEN : "";
@@ -178,8 +205,8 @@ static void print_report(void)
             else
                 coef_col = g_color ? C_YELLOW : "";
 
-            printf("| %-16s | %-6s | %8llu | %8llu | %6u | %s%4u%s | %s%6s%s |\n",
-                   r->name, r->backend,
+            printf("| %s%-16s%s | %8llu | %8llu | %6u | %s%4u%s | %s%6s%s |\n",
+                   name_col, r->name, g_color ? C_RESET : "",
                    (unsigned long long)r->libc_ns,
                    (unsigned long long)r->rt_ns,
                    r->checks,
@@ -190,14 +217,47 @@ static void print_report(void)
         }
     }
 
-    printf("+------------------+--------+----------+----------+--------+--------+----------+\n");
-    printf("| TOTAL            |        |          |          | %6u | %s%4u%s |          |\n",
+    printf("+------------------+----------+----------+--------+------+----------+\n");
+    printf("| TOTAL            |          |          | %6u | %s%4u%s |          |\n",
            tc,
            tf ? (g_color ? C_RED : "") : (g_color ? C_GREEN : ""),
            tf, g_color ? C_RESET : "");
-    printf("+------------------+--------+----------+----------+--------+--------+----------+\n");
-    printf("%slegend%s: coef 1.00 = parity · 2.00 = rt 2× faster · color by group\n\n",
+    printf("+------------------+----------+----------+--------+------+----------+\n");
+}
+
+static void print_report(void)
+{
+    /* Emit one table per backend, in first-seen order. */
+    char seen[16][BACK];
+    int nseen = 0;
+    int i, j;
+
+    printf("\n");
+    if (g_color)
+        printf("%srt host oracle%s — one table per accessible backend\n", C_BOLD, C_RESET);
+    else
+        printf("rt host oracle — one table per accessible backend\n");
+    printf("%slegend%s: coef = libc_ns/rt_ns · 1.00 parity · 2.00 = rt 2× faster\n",
            g_color ? C_DIM : "", g_color ? C_RESET : "");
+
+    for (i = 0; i < g_nrows; i++) {
+        int found = 0;
+        for (j = 0; j < nseen; j++) {
+            if (strcmp(seen[j], g_rows[i].backend) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found && nseen < 16) {
+            snprintf(seen[nseen], BACK, "%s", g_rows[i].backend);
+            nseen++;
+        }
+    }
+
+    for (j = 0; j < nseen; j++)
+        print_one_backend(seen[j]);
+
+    printf("\n");
 }
 
 /* ===================== MEMORY timed ===================== */
@@ -394,7 +454,11 @@ static void run_mem_backend(const char *backend, copy_fn cpy, copy_fn mv,
 
 /* ===================== STRING timed ===================== */
 
-static void bench_strlen(struct row *r)
+typedef size_t (*strlen_fn)(const char *);
+typedef int (*strcmp_fn)(const char *, const char *);
+typedef char *(*strchr_fn)(const char *, int);
+
+static void bench_strlen_fn(struct row *r, strlen_fn fn)
 {
     enum { LOOPS = ITER_STR };
     static char s[1025];
@@ -406,12 +470,12 @@ static void bench_strlen(struct row *r)
         s[i] = (char)('a' + (i % 26));
     s[1024] = 0;
 
-    row_add(r, rt_strlen(s) == strlen(s));
-    row_add(r, rt_strlen("") == 0);
+    row_add(r, fn(s) == strlen(s));
+    row_add(r, fn("") == 0);
 
     for (k = 0; k < WARM; k++) {
         sink += strlen(s);
-        sink += rt_strlen(s);
+        sink += fn(s);
     }
     t0 = now_ns();
     for (k = 0; k < LOOPS; k++)
@@ -421,11 +485,79 @@ static void bench_strlen(struct row *r)
 
     t0 = now_ns();
     for (k = 0; k < LOOPS; k++)
-        sink += rt_strlen(s);
+        sink += fn(s);
     t1 = now_ns();
     r->rt_ns = t1 - t0;
     (void)sink;
 }
+
+static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
+{
+    enum { LOOPS = ITER_STR };
+    static char a[256], b[256];
+    size_t i, k;
+    uint64_t t0, t1;
+    volatile int sink = 0;
+
+    for (i = 0; i < 255; i++)
+        a[i] = b[i] = (char)('a' + (i % 26));
+    a[255] = b[255] = 0;
+    b[200] = 'z';
+
+    row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+
+    for (k = 0; k < WARM; k++) {
+        sink += strcmp(a, b);
+        sink += fn(a, b);
+    }
+    t0 = now_ns();
+    for (k = 0; k < LOOPS; k++)
+        sink += strcmp(a, b);
+    t1 = now_ns();
+    r->libc_ns = t1 - t0;
+
+    t0 = now_ns();
+    for (k = 0; k < LOOPS; k++)
+        sink += fn(a, b);
+    t1 = now_ns();
+    r->rt_ns = t1 - t0;
+    (void)sink;
+}
+
+static void bench_strchr_fn(struct row *r, strchr_fn fn)
+{
+    enum { LOOPS = ITER_STR };
+    static char s[512];
+    size_t i, k;
+    uint64_t t0, t1;
+    volatile char *sink;
+
+    for (i = 0; i < 511; i++)
+        s[i] = (char)('a' + (i % 26));
+    s[400] = 'Z';
+    s[511] = 0;
+
+    row_add(r, fn(s, 'Z') == strchr(s, 'Z'));
+    row_add(r, fn(s, 'Q') == strchr(s, 'Q'));
+
+    for (k = 0; k < WARM; k++) {
+        sink = strchr(s, 'Z');
+        sink = fn(s, 'Z');
+    }
+    t0 = now_ns();
+    for (k = 0; k < LOOPS; k++)
+        sink = strchr(s, 'Z');
+    t1 = now_ns();
+    r->libc_ns = t1 - t0;
+
+    t0 = now_ns();
+    for (k = 0; k < LOOPS; k++)
+        sink = fn(s, 'Z');
+    t1 = now_ns();
+    r->rt_ns = t1 - t0;
+    (void)sink;
+}
+
 
 static void bench_strcpy(struct row *r)
 {
@@ -459,39 +591,6 @@ static void bench_strcpy(struct row *r)
     r->rt_ns = t1 - t0;
 }
 
-static void bench_strcmp(struct row *r)
-{
-    enum { LOOPS = ITER_STR };
-    static char a[256], b[256];
-    size_t i, k;
-    uint64_t t0, t1;
-    volatile int sink = 0;
-
-    for (i = 0; i < 255; i++)
-        a[i] = b[i] = (char)('a' + (i % 26));
-    a[255] = b[255] = 0;
-    b[200] = 'z';
-
-    row_add(r, sign_eq(rt_strcmp(a, b), strcmp(a, b)));
-
-    for (k = 0; k < WARM; k++) {
-        sink += strcmp(a, b);
-        sink += rt_strcmp(a, b);
-    }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += strcmp(a, b);
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink += rt_strcmp(a, b);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
-    (void)sink;
-}
-
 static void bench_strstr(struct row *r)
 {
     enum { LOOPS = ITER_STR };
@@ -521,39 +620,6 @@ static void bench_strstr(struct row *r)
     t0 = now_ns();
     for (k = 0; k < LOOPS; k++)
         sink = rt_strstr(hay, nd);
-    t1 = now_ns();
-    r->rt_ns = t1 - t0;
-    (void)sink;
-}
-
-static void bench_strchr(struct row *r)
-{
-    enum { LOOPS = ITER_STR };
-    static char s[512];
-    size_t i, k;
-    uint64_t t0, t1;
-    volatile char *sink;
-
-    for (i = 0; i < 511; i++)
-        s[i] = (char)('a' + (i % 26));
-    s[400] = 'Z';
-    s[511] = 0;
-
-    row_add(r, rt_strchr(s, 'Z') == strchr(s, 'Z'));
-
-    for (k = 0; k < WARM; k++) {
-        sink = strchr(s, 'Z');
-        sink = rt_strchr(s, 'Z');
-    }
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink = strchr(s, 'Z');
-    t1 = now_ns();
-    r->libc_ns = t1 - t0;
-
-    t0 = now_ns();
-    for (k = 0; k < LOOPS; k++)
-        sink = rt_strchr(s, 'Z');
     t1 = now_ns();
     r->rt_ns = t1 - t0;
     (void)sink;
@@ -604,17 +670,30 @@ static void run_strings(void)
 {
     struct row *r;
     r = row_begin("strlen", "scalar", GRP_STRING);
-    if (r) bench_strlen(r);
+    if (r) bench_strlen_fn(r, rt_strlen);
     r = row_begin("strcpy", "scalar", GRP_STRING);
     if (r) bench_strcpy(r);
     r = row_begin("strcmp", "scalar", GRP_STRING);
-    if (r) bench_strcmp(r);
+    if (r) bench_strcmp_fn(r, rt_strcmp);
     r = row_begin("strchr", "scalar", GRP_STRING);
-    if (r) bench_strchr(r);
+    if (r) bench_strchr_fn(r, rt_strchr);
     r = row_begin("strstr", "scalar", GRP_STRING);
     if (r) bench_strstr(r);
     exercise_strings_misc();
 }
+
+#if defined(__aarch64__) || defined(__arm64__)
+static void run_strings_neon(void)
+{
+    struct row *r;
+    r = row_begin("strlen", "neon", GRP_STRING);
+    if (r) bench_strlen_fn(r, rt_strlen_neon);
+    r = row_begin("strcmp", "neon", GRP_STRING);
+    if (r) bench_strcmp_fn(r, rt_strcmp_neon);
+    r = row_begin("strchr", "neon", GRP_STRING);
+    if (r) bench_strchr_fn(r, rt_strchr_neon);
+}
+#endif
 
 /* ===================== NUMERIC / SORT / FORMAT / ALLOC ===================== */
 
@@ -810,7 +889,20 @@ static void run_alloc(void)
     if (r) r->rt_ns = t1 - t0;
 }
 
-#if defined(__x86_64__)
+#if defined(__i386__) && !defined(__x86_64__)
+static int cpuid_edx_bit(unsigned bit)
+{
+    unsigned eax, ebx, ecx, edx, max;
+    __asm__ volatile("cpuid" : "=a"(max), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
+    if (max < 1)
+        return 0;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
+    return (edx & (1u << bit)) != 0;
+}
+static int have_mmx(void) { return cpuid_edx_bit(23); }
+static int have_sse(void) { return cpuid_edx_bit(25); }
+static int have_sse2(void) { return cpuid_edx_bit(26); }
+#elif defined(__x86_64__)
 static unsigned long long xcr0(void)
 {
     unsigned eax, edx;
@@ -853,21 +945,29 @@ int main(void)
             g_color = 0;
     }
 
-    printf("%srt host oracle%s — libc vs rt timings (ns) · coef = libc_ns/rt_ns\n",
+    printf("%srt host oracle%s — libc vs rt · separate table per accessible backend\n",
            g_color ? C_BOLD : "", g_color ? C_RESET : "");
-#if defined(__aarch64__) || defined(__arm64__)
-    printf("host: ARM64  ·  vector: NEON");
-    /* Apple Silicon (M1–M4) does not implement SVE; SVE is optional ARMv8/9. */
-    printf("  ·  SVE: not available on Apple Silicon (skipped)\n");
-#elif defined(__x86_64__)
-    printf("host: x86_64  ·  vector: SSE2");
-    if (have_avx2()) printf("/AVX2");
-    if (have_avx512()) printf("/AVX-512");
+
+#if defined(__i386__) && !defined(__x86_64__)
+    printf("host: i386");
+    printf("  ·  backends: scalar i386");
+    if (have_mmx()) printf(" mmx");
+    if (have_sse()) printf(" sse");
+    if (have_sse2()) printf(" sse2");
     printf("\n");
+#elif defined(__x86_64__)
+    printf("host: x86_64  ·  backends: scalar sse2");
+    if (have_avx2()) printf(" avx2");
+    if (have_avx512()) printf(" avx512");
+    printf("\n");
+#elif defined(__aarch64__) || defined(__arm64__)
+    printf("host: ARM64  ·  backends: scalar neon");
+    printf("  ·  SVE: not available on Apple Silicon (skipped)\n");
 #else
-    printf("host: unknown\n");
+    printf("host: unknown  ·  backends: scalar\n");
 #endif
 
+    /* ---- always: portable scalar plane ---- */
     run_mem_backend("scalar", rt_memcpy_scalar, rt_memmove_scalar,
                     rt_memset_scalar, rt_memcmp_scalar);
     run_strings();
@@ -876,15 +976,24 @@ int main(void)
     run_format();
     run_alloc();
 
-#if defined(__x86_64__)
+#if defined(__i386__) && !defined(__x86_64__)
+    /* Pentium-era ladder: 386 REP → MMX → SSE (P3) */
+    run_mem_backend("i386", rt_memcpy_i386, 0, rt_memset_i386, rt_memcmp_i386);
+    if (have_mmx())
+        run_mem_backend("mmx", rt_memcpy_mmx, 0, rt_memset_mmx, rt_memcmp_mmx);
+    if (have_sse())
+        run_mem_backend("sse", rt_memcpy_sse, 0, rt_memset_sse, rt_memcmp_sse);
+#elif defined(__x86_64__)
     run_mem_backend("sse2", rt_memcpy_sse2, 0, rt_memset_sse2, rt_memcmp_sse2);
     if (have_avx2())
         run_mem_backend("avx2", rt_memcpy_avx2, 0, rt_memset_avx2, rt_memcmp_avx2);
     if (have_avx512())
         run_mem_backend("avx512", rt_memcpy_avx512, 0, rt_memset_avx512, rt_memcmp_avx512);
 #elif defined(__aarch64__) || defined(__arm64__)
+#if defined(__aarch64__) || defined(__arm64__)
     run_mem_backend("neon", rt_memcpy_neon, 0, rt_memset_neon, rt_memcmp_neon);
-    /* SVE kernels exist in-tree but require HWCAP_SVE; Apple M-series: never. */
+    run_strings_neon();
+#endif
 #endif
 
     print_report();

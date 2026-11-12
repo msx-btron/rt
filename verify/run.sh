@@ -36,7 +36,8 @@ asm32() {
 
 case "$os:$arch:$mode" in
 Darwin:arm64:*|Darwin:aarch64:*)
-    "$cc" $cflags -o build/test_host test_host.c $scalar_src ../src/aarch64/neon/mem.S
+    "$cc" $cflags -o build/test_host test_host.c $scalar_src \
+        ../src/aarch64/neon/mem.S ../src/aarch64/neon/string.S
     run_bin ./build/test_host
     ;;
 Linux:x86_64:*)
@@ -50,3 +51,7 @@ Linux:x86_64:*)
     exit 1
     ;;
 esac
+
+# For vintage i386 profiles under QEMU:
+#   sh qemu.sh pentium3   # scalar + i386 + mmx + sse
+#   sh qemu.sh all

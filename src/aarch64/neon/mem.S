@@ -1,7 +1,4 @@
-/* AArch64 Advanced SIMD.
-   Unaligned ldr/str q is one issue on v8, so there is no align head.
-   64-byte unroll keeps four q registers in flight.
-   Tails are GPR and never read past n.
+/* AArch64 Advanced SIMD — size-classed memcpy, memset, memcmp.
    Darwin C symbols carry a leading underscore; Linux does not. */
 
 .text
@@ -12,6 +9,7 @@
 #define SYM(name) name
 #endif
 
+/* ---- memcpy: 0-15 byte scalar, 16-63 q-path, 64+ 64-byte unroll ---- */
 .globl SYM(rt_memcpy_neon)
 #ifndef __APPLE__
 .type SYM(rt_memcpy_neon), %function
@@ -19,8 +17,12 @@
 .p2align 4
 SYM(rt_memcpy_neon):
     mov x8, x0
+    cmp x2, #16
+    b.lo .Lmc_small
     cmp x2, #64
-    b.lo .Lmc_16
+    b.lo .Lmc_mid
+
+    /* large: 64-byte body */
 .p2align 4
 .Lmc_64:
     ldp q0, q1, [x1]
@@ -32,32 +34,39 @@ SYM(rt_memcpy_neon):
     sub x2, x2, #64
     cmp x2, #64
     b.hs .Lmc_64
-.Lmc_16:
+    cbz x2, .Lmc_ret
     cmp x2, #16
-    b.lo .Lmc_8
+    b.lo .Lmc_small_ptr
+
+.Lmc_mid:
+    /* 16..63: one q at a time */
     ldr q0, [x1], #16
     str q0, [x0], #16
     sub x2, x2, #16
-    b .Lmc_16
-.Lmc_8:
+    cmp x2, #16
+    b.hs .Lmc_mid
+    cbz x2, .Lmc_ret
+
+.Lmc_small_ptr:
+    /* tail with advanced pointers */
     cmp x2, #8
-    b.lo .Lmc_4
+    b.lo 1f
     ldr x9, [x1], #8
     str x9, [x0], #8
     sub x2, x2, #8
-.Lmc_4:
+1:
     cmp x2, #4
-    b.lo .Lmc_2
+    b.lo 2f
     ldr w9, [x1], #4
     str w9, [x0], #4
     sub x2, x2, #4
-.Lmc_2:
+2:
     cmp x2, #2
-    b.lo .Lmc_1
+    b.lo 3f
     ldrh w9, [x1], #2
     strh w9, [x0], #2
     sub x2, x2, #2
-.Lmc_1:
+3:
     cbz x2, .Lmc_ret
     ldrb w9, [x1]
     strb w9, [x0]
@@ -65,6 +74,35 @@ SYM(rt_memcpy_neon):
     mov x0, x8
     ret
 
+    /* tiny: n < 16, pointers still at start */
+.Lmc_small:
+    tbz x2, #3, 1f          /* if n < 8 */
+    ldr x9, [x1]
+    str x9, [x0]
+    sub x2, x2, #8
+    add x1, x1, #8
+    add x0, x0, #8
+1:
+    tbz x2, #2, 2f
+    ldr w9, [x1]
+    str w9, [x0]
+    sub x2, x2, #4
+    add x1, x1, #4
+    add x0, x0, #4
+2:
+    tbz x2, #1, 3f
+    ldrh w9, [x1]
+    strh w9, [x0]
+    sub x2, x2, #2
+    add x1, x1, #2
+    add x0, x0, #2
+3:
+    tbz x2, #0, .Lmc_ret
+    ldrb w9, [x1]
+    strb w9, [x0]
+    b .Lmc_ret
+
+/* ---- memset ---- */
 .globl SYM(rt_memset_neon)
 #ifndef __APPLE__
 .type SYM(rt_memset_neon), %function
@@ -77,8 +115,10 @@ SYM(rt_memset_neon):
     orr w1, w1, w1, lsl #16
     orr x3, x1, x1, lsl #32
     dup v0.2d, x3
+    cmp x2, #16
+    b.lo .Lms_small
     cmp x2, #64
-    b.lo .Lms_16
+    b.lo .Lms_mid
 .p2align 4
 .Lms_64:
     stp q0, q0, [x0]
@@ -87,58 +127,101 @@ SYM(rt_memset_neon):
     sub x2, x2, #64
     cmp x2, #64
     b.hs .Lms_64
-.Lms_16:
+    cbz x2, .Lms_ret
     cmp x2, #16
-    b.lo .Lms_8
+    b.lo .Lms_tail
+.Lms_mid:
     str q0, [x0], #16
     sub x2, x2, #16
-    b .Lms_16
-.Lms_8:
+    cmp x2, #16
+    b.hs .Lms_mid
+    cbz x2, .Lms_ret
+.Lms_tail:
     cmp x2, #8
-    b.lo .Lms_4
+    b.lo 1f
     str x3, [x0], #8
     sub x2, x2, #8
-.Lms_4:
+1:
     cmp x2, #4
-    b.lo .Lms_2
+    b.lo 2f
     str w3, [x0], #4
     sub x2, x2, #4
-.Lms_2:
+2:
     cmp x2, #2
-    b.lo .Lms_1
+    b.lo 3f
     strh w3, [x0], #2
     sub x2, x2, #2
-.Lms_1:
+3:
     cbz x2, .Lms_ret
     strb w3, [x0]
 .Lms_ret:
     mov x0, x8
     ret
+.Lms_small:
+    tbz x2, #3, 1f
+    str x3, [x0], #8
+    sub x2, x2, #8
+1:
+    tbz x2, #2, 2f
+    str w3, [x0], #4
+    sub x2, x2, #4
+2:
+    tbz x2, #1, 3f
+    strh w3, [x0], #2
+    sub x2, x2, #2
+3:
+    tbz x2, #0, .Lms_ret
+    strb w3, [x0]
+    b .Lms_ret
 
+/* ---- memcmp: 32-byte eor+umaxv ---- */
 .globl SYM(rt_memcmp_neon)
 #ifndef __APPLE__
 .type SYM(rt_memcmp_neon), %function
 #endif
 .p2align 4
 SYM(rt_memcmp_neon):
-    cmp x2, #16
-    b.lo .Lmp_b
+    cmp x2, #32
+    b.lo .Lmp_16
 .p2align 4
+.Lmp_32:
+    ldp q0, q1, [x0]
+    ldp q2, q3, [x1]
+    eor v0.16b, v0.16b, v2.16b
+    eor v1.16b, v1.16b, v3.16b
+    orr v0.16b, v0.16b, v1.16b
+    umaxv b4, v0.16b
+    umov w9, v4.b[0]
+    cbnz w9, .Lmp_b
+    add x0, x0, #32
+    add x1, x1, #32
+    sub x2, x2, #32
+    cmp x2, #32
+    b.hs .Lmp_32
 .Lmp_16:
-    ldr q0, [x0], #16
-    ldr q1, [x1], #16
-    cmeq v2.16b, v0.16b, v1.16b
-    uminv b3, v2.16b
-    umov w9, v3.b[0]
-    cmp w9, #0xff
-    b.ne .Lmp_scan
-    sub x2, x2, #16
     cmp x2, #16
-    b.hs .Lmp_16
-    b .Lmp_b
-.Lmp_scan:
-    sub x0, x0, #16
-    sub x1, x1, #16
+    b.lo .Lmp_8
+    ldr q0, [x0]
+    ldr q1, [x1]
+    eor v0.16b, v0.16b, v1.16b
+    umaxv b4, v0.16b
+    umov w9, v4.b[0]
+    cbnz w9, .Lmp_b
+    add x0, x0, #16
+    add x1, x1, #16
+    sub x2, x2, #16
+    b .Lmp_16
+.Lmp_8:
+    cmp x2, #8
+    b.lo .Lmp_b
+    ldr x9, [x0]
+    ldr x10, [x1]
+    eor x11, x9, x10
+    cbnz x11, .Lmp_b
+    add x0, x0, #8
+    add x1, x1, #8
+    sub x2, x2, #8
+    b .Lmp_8
 .Lmp_b:
     cbz x2, .Lmp_eq
 .Lmp_loop:
