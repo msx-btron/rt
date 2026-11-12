@@ -588,7 +588,7 @@ static void bench_strchr_fn(struct row *r, strchr_fn fn)
     static char s[512];
     size_t i, k;
     uint64_t t0, t1;
-    volatile char *sink;
+    volatile uintptr_t sink = 0;
 
     for (i = 0; i < 511; i++)
         s[i] = (char)('a' + (i % 26));
@@ -605,18 +605,18 @@ static void bench_strchr_fn(struct row *r, strchr_fn fn)
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
         int si;
         for (k = 0; k < WARM; k++) {
-            sink = strchr(s, 'Z');
-            sink = fn(s, 'Z');
+            sink ^= (uintptr_t)strchr(s, 'Z');
+            sink ^= (uintptr_t)fn(s, 'Z');
         }
         for (si = 0; si < SAMPLES; si++) {
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                sink = strchr(s, 'Z');
+                sink ^= (uintptr_t)strchr(s, 'Z');
             t1 = now_ns();
             lc[si] = t1 - t0;
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                sink = fn(s, 'Z');
+                sink ^= (uintptr_t)fn(s, 'Z');
             t1 = now_ns();
             rt_t[si] = t1 - t0;
         }
@@ -629,30 +629,41 @@ static void bench_strchr_fn(struct row *r, strchr_fn fn)
 
 static void bench_strcpy(struct row *r)
 {
-    enum { LOOPS = ITER_STR };
-    static char src[512], da[512], db[512];
-    size_t i, k;
+    enum { LOOPS = ITER_STR, N = 512 };
+    static char src[N], da[N], db[N];
+    size_t i, k, ncopy;
     uint64_t t0, t1;
 
-    for (i = 0; i < 511; i++)
+    for (i = 0; i < N - 1; i++)
         src[i] = (char)('A' + (i % 26));
-    src[511] = 0;
+    src[N - 1] = 0;
 
-    strcpy(da, src);
+    /* The NUL sits in the last byte, so strcpy would write N bytes.
+       memcpy of that count is the same write, and the length is checked. */
+    ncopy = 0;
+    while (ncopy < N && src[ncopy] != '\0')
+        ncopy++;
+    if (ncopy >= N || ncopy + 1 > sizeof da || ncopy + 1 > sizeof db) {
+        row_add(r, 0);
+        return;
+    }
+    ncopy++;
+
+    memcpy(da, src, ncopy);
     rt_strcpy(db, src);
-    row_add(r, strcmp(da, db) == 0);
+    row_add(r, memcmp(da, db, ncopy) == 0);
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
         int si;
         for (k = 0; k < WARM; k++) {
-            strcpy(da, src);
+            memcpy(da, src, ncopy);
             rt_strcpy(db, src);
         }
         for (si = 0; si < SAMPLES; si++) {
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                strcpy(da, src);
+                memcpy(da, src, ncopy);
             t1 = now_ns();
             lc[si] = t1 - t0;
             t0 = now_ns();
@@ -673,7 +684,7 @@ static void bench_strstr(struct row *r)
     const char *nd = "needle";
     size_t i, k;
     uint64_t t0, t1;
-    volatile const char *sink;
+    volatile uintptr_t sink = 0;
 
     for (i = 0; i < 1000; i++)
         hay[i] = (char)('a' + (i % 26));
@@ -686,18 +697,18 @@ static void bench_strstr(struct row *r)
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
         int si;
         for (k = 0; k < WARM; k++) {
-            sink = strstr(hay, nd);
-            sink = rt_strstr(hay, nd);
+            sink ^= (uintptr_t)strstr(hay, nd);
+            sink ^= (uintptr_t)rt_strstr(hay, nd);
         }
         for (si = 0; si < SAMPLES; si++) {
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                sink = strstr(hay, nd);
+                sink ^= (uintptr_t)strstr(hay, nd);
             t1 = now_ns();
             lc[si] = t1 - t0;
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                sink = rt_strstr(hay, nd);
+                sink ^= (uintptr_t)rt_strstr(hay, nd);
             t1 = now_ns();
             rt_t[si] = t1 - t0;
         }
@@ -842,7 +853,9 @@ static void run_numeric(void)
 static void run_sort(void)
 {
     struct row *r;
-    int a[1024], b[1024], c[1024];
+    int a[1024] = {0};
+    int b[1024] = {0};
+    int c[1024] = {0};
     size_t n, k;
     uint64_t t0, t1;
     int si;
@@ -952,6 +965,9 @@ static void run_format(void)
     row_add(r, ra == rb && strcmp(a, b) == 0);
     ra = rt_snprintf(a, 5, "abcdefgh");
     row_add(r, ra == 8 && strcmp(a, "abcd") == 0);
+    a[0] = 'X';
+    ra = rt_snprintf(a, sizeof a, NULL);
+    row_add(r, ra == 0 && a[0] == '\0');
 
     t0 = now_ns();
     for (k = 0; k < ITER_FMT; k++)

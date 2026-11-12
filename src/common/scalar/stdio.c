@@ -49,10 +49,12 @@ static void pad(char *buf, size_t cap, size_t *pos, int n, char c)
 int rt_vsnprintf(char *buf, size_t n, const char *fmt, va_list ap)
 {
     size_t pos = 0;
-    const char *p = fmt;
+    const char *p;
 
+    /* A null format is an empty format. p must see that replacement. */
     if (!fmt)
         fmt = "";
+    p = fmt;
 
     while (*p) {
         if (*p != '%') {

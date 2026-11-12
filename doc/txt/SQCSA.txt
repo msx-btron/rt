@@ -1,0 +1,178 @@
+Security and Quality Code Static Analysis
+src/common/scalar  and  verify/  —  2026-11-13
+
+Scope is the scalar C99 runtime under src/common/scalar/ and the host
+oracle (verify/test_host.c, verify/test_mem.c), plus the headers they
+include. Assembly backends under src/aarch64, src/i386, src/riscv32,
+src/riscv64, and src/x86_64 are not scanned and not edited. These three
+tools read C.
+
+A scanner hit names a call or a pattern. It is a defect when a read of
+that site shows the bad path can run. The three groups used below are
+quality, security, and introspection.
+
+Brought across from the B-System tree (bitedits/btron). The command is
+the same: make security. The modules are this library, not the OS tree.
+
+
+1. Tools
+
+  Apple clang 21.0.0 (arm64)
+    clang --analyze -std=c99 -Wall -Wextra -Wformat=2
+      -fno-strict-aliasing -fno-builtin -Iinclude
+      -Xanalyzer -analyzer-output=text
+    The extra two flags are the ones the host oracle compiles with.
+    -Werror and -O2 are not passed. Analyzer warnings stay warnings.
+
+  flawfinder 2.0.20
+    flawfinder --minlevel=4 --quiet src/common/scalar verify/test_host.c verify/test_mem.c
+    Exit 0. flawfinder exits 0 when it has hits, so a green exit is not a
+    clean tree. Level 2 is where a fixed-size char array sits. The gate
+    uses level 4 so that noise is not a failure.
+
+  cppcheck 2.22.0
+    cppcheck --std=c99 --enable=warning,portability --quiet
+      -Iinclude src/common/scalar verify/test_host.c verify/test_mem.c
+    Exit 0. This run did not pass --error-exitcode, so exit 0 means the
+    tool finished. It does not mean zero findings.
+
+  make security is the gate. It runs sec-scalar, then sec-verify, then
+  scripts/security_report.py.
+
+  Valgrind does not run on this Mac. Coverity Scan and CodeChecker are
+  not in the gate. clang --analyze is the scanner that does run here.
+
+
+2. Scalar runtime
+
+  src/common/scalar/mem.c, string.c, stdlib.c, stdio.c.
+  flawfinder, level 4 and above: 0 hits. No level 5 hit.
+  Lines analyzed: 1299. Physical SLOC: 1170.
+  Nine level-2 hits, all the "char" rule on fixed arrays in stdio.c and
+  stdlib.c. They are below the gate.
+
+  clang --analyze and cppcheck agree on one site in rt_vsnprintf.
+
+    src/common/scalar/stdio.c
+      const char *p = fmt;     /* line 52 */
+      if (!fmt) fmt = "";      /* line 54 */
+      while (*p)               /* line 57 */
+
+  p is captured before the null check. The store to fmt is dead.
+  A null format still walks *p. The check does not protect the walk.
+  Catalogued. The function was not edited in this pass.
+
+  mem.c, string.c, and stdlib.c produced no clang --analyze diagnostics
+  and no cppcheck warning or portability findings.
+
+
+3. Host oracle
+
+  verify/test_host.c and verify/test_mem.c.
+
+  flawfinder --minlevel=4 reported 3 hits, all libc strcpy in the strcpy
+  benchmark:
+
+    verify/test_host.c:641
+    verify/test_host.c:649
+    verify/test_host.c:655
+
+  The destination is da[512]. The source is src[512] with a NUL at
+  index 511. The call is the libc side of the comparison against
+  rt_strcpy. They stay. No flawfinder: ignore comment was added.
+
+  clang --analyze reported two dead stores:
+
+    verify/test_host.c:608   sink = strchr(...)
+    verify/test_host.c:689   sink = strstr(...)
+
+  The assignment keeps the call on the timed path. The value is not
+  read again in that sample. Not a defect in the runtime.
+
+  cppcheck reported uninitvar on qsort(b) and qsort(c):
+
+    verify/test_host.c:858
+    verify/test_host.c:895
+
+  The note assumes the fill loop runs zero times (n == 0) and then
+  treats the array as read. qsort of zero elements does not read the
+  array. Not a defect.
+
+  verify/test_mem.c produced no diagnostics from any of the three tools.
+
+
+4. How to repeat
+
+  make security
+  make security-report
+  python3 tools/sqcsa_update.py src/common/scalar verify
+
+  flawfinder --minlevel=4 --quiet src/common/scalar verify/test_host.c verify/test_mem.c
+  cppcheck --std=c99 --enable=warning,portability --quiet \
+      -Iinclude src/common/scalar verify/test_host.c verify/test_mem.c
+  clang --analyze -std=c99 -Wall -Wextra -Wformat=2 \
+      -fno-strict-aliasing -fno-builtin -Iinclude \
+      -Xanalyzer -analyzer-output=text \
+      src/common/scalar/mem.c src/common/scalar/string.c \
+      src/common/scalar/stdio.c src/common/scalar/stdlib.c \
+      verify/test_host.c verify/test_mem.c
+
+
+5. Per-module security gate targets  —  2026-11-13
+
+  Targets in the top Makefile. Each runs clang --analyze, flawfinder
+  at level 4 and above, and cppcheck. Neither target passes
+  --error-exitcode. Findings are catalogued here. make security still
+  finishes, then prints the ASCII tree.
+
+  make security calls each sub-target in order:
+    sec-scalar, then sec-verify.
+
+  Results recorded on 2026-11-13 (Apple clang 21.0.0, flawfinder 2.0.20,
+  cppcheck 2.22.0, arm64 Mac). The blocks below are rewritten by
+  tools/sqcsa_update.py.
+
+  ── sec-scalar  (src/common/scalar/)  —  updated 2026-11-13  ─────────────────────────────────────────
+
+  clang --analyze  src/common/scalar
+    src/common/scalar/stdio.c:55:9: warning: Value stored to 'fmt' is never read [deadcode.DeadStores]
+    src/common/scalar/stdio.c:57:12: warning: Dereference of null pointer (loaded from variable 'p') [core.NullDereference]
+
+  flawfinder --minlevel=4  src/common/scalar/
+    Lines analyzed : 1,299
+    Hits@level 4   : 0   (zero at level 5)
+    Hits@level 4+  : 0
+  Clean at level 4.  src/common/scalar/ passes the flawfinder gate today.
+
+  cppcheck  src/common/scalar/
+    src/common/scalar/stdio.c:57:13: warning: Either the condition '!fmt' is redundant or there is possible null pointer dereference: p. [nullPointerRedundantCheck]
+
+  ── sec-verify  (verify/)  —  updated 2026-11-13  ────────────────────────────────────────────────────
+
+  clang --analyze  verify
+    verify/test_host.c:608:13: warning: Value stored to 'sink' is never read [deadcode.DeadStores]
+    verify/test_host.c:689:13: warning: Value stored to 'sink' is never read [deadcode.DeadStores]
+
+  flawfinder --minlevel=4  verify/
+    Lines analyzed : 1,395
+    Hits@level 4   : 3   (zero at level 5)
+    Hits@level 4+  : 3
+    verify/test_host.c:641:  [4] (buffer) strcpy:
+    verify/test_host.c:649:  [4] (buffer) strcpy:
+    verify/test_host.c:655:  [4] (buffer) strcpy:
+
+  cppcheck  verify/
+    verify/test_host.c:858:15: warning: Uninitialized variable: b [uninitvar]
+    verify/test_host.c:895:15: warning: Uninitialized variable: c [uninitvar]
+
+  ── Summary table ────────────────────────────────────────────────────────────
+
+    Target      flawfinder-4+  cppcheck findings  clang-analyze   Gate
+    ─────────── ─────────────  ─────────────────  ──────────────  ────
+    sec-scalar               0                  1               2  INFO
+    sec-verify               3                  2               2  INFO
+
+  Gate = PASS means flawfinder level 4+, cppcheck, and clang --analyze
+  each reported zero. Gate = INFO means the tools ran and the hits are
+  catalogued above. This Makefile does not pass --error-exitcode, so a
+  green `make security` means the tools finished.

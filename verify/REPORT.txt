@@ -1,0 +1,47 @@
+rt host oracle — comparing rt against host libc
+
++----------------------------------------------------------------------+
+| rt host oracle  (libc reference vs rt implementations)               |
++----------------------+----------+--------+------+--------+-----------+
+| function             | backend  | checks | fail | status | time us   |
++----------------------+----------+--------+------+--------+-----------+
+| memcpy               | scalar   |   2448 |    0 | PASS   |   17378.7 |
+| memmove              | scalar   |    204 |    0 | PASS   |      56.6 |
+| memset               | scalar   |   1666 |    0 | PASS   |    7360.5 |
+| memcmp               | scalar   |    109 |    0 | PASS   |       5.5 |
+| strlen               | scalar   |     68 |    0 | PASS   |       4.6 |
+| strnlen              | scalar   |     21 |    0 | PASS   |       0.8 |
+| strcpy               | scalar   |      8 |    0 | PASS   |       0.8 |
+| strncpy              | scalar   |     13 |    0 | PASS   |       1.2 |
+| strcat               | scalar   |      2 |    0 | PASS   |       0.3 |
+| strncat              | scalar   |      9 |    0 | PASS   |       0.8 |
+| strcmp               | scalar   |      6 |    0 | PASS   |       0.3 |
+| strncmp              | scalar   |      9 |    0 | PASS   |       0.6 |
+| strchr               | scalar   |    128 |    0 | PASS   |       1.9 |
+| strrchr              | scalar   |    128 |    0 | PASS   |       1.8 |
+| strstr               | scalar   |     20 |    0 | PASS   |       1.8 |
+| strpbrk              | scalar   |     16 |    0 | PASS   |      13.6 |
+| strscpy              | scalar   |     33 |    0 | PASS   |       1.0 |
+| strscat              | scalar   |      2 |    0 | PASS   |       0.3 |
+| strpad               | scalar   |      2 |    0 | PASS   |       0.2 |
+| atoi                 | scalar   |      7 |    0 | PASS   |       4.2 |
+| strtoul              | scalar   |      5 |    0 | PASS   |       1.2 |
+| strtoull             | scalar   |      2 |    0 | PASS   |       0.5 |
+| qsort                | scalar   |     67 |    0 | PASS   |     262.0 |
+| abs                  | scalar   |      1 |    0 | PASS   |       0.4 |
+| alloc                | scalar   |      5 |    0 | PASS   |      70.7 |
+| snprintf             | scalar   |     10 |    0 | PASS   |       8.5 |
+| fmt_f32              | scalar   |      7 |    0 | PASS   |       1.4 |
+| memcpy               | sse2     |   2448 |    0 | PASS   |   11026.1 |
+| memset               | sse2     |   1666 |    0 | PASS   |    7023.3 |
+| memcmp               | sse2     |    109 |    0 | PASS   |       3.2 |
+| memcpy               | avx2     |   2448 |    0 | PASS   |   11015.6 |
+| memset               | avx2     |   1666 |    0 | PASS   |    6616.5 |
+| memcmp               | avx2     |    109 |    0 | PASS   |       3.4 |
+| memcpy               | avx512   |   2448 |    0 | PASS   |   12952.9 |
+| memset               | avx512   |   1666 |    0 | PASS   |    6753.3 |
+| memcmp               | avx512   |    109 |    0 | PASS   |       3.2 |
++----------------------+----------+--------+------+--------+-----------+
+| TOTAL                |          |  17665 |    0 | PASS   |           |
++----------------------+----------+--------+------+--------+-----------+
+
