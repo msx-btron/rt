@@ -1236,3 +1236,1089 @@ Proof. apply Nat.pow_gt_lin_r; lia. Qed.
 Lemma rest_lt64 : forall filled rest,
   (filled + rest < 2 ^ 64)%nat -> (rest < 2 ^ 64)%nat.
 Proof. intros filled rest H. lia. Qed.
+Lemma imm_bound : forall k, (k <= 64)%nat -> (k < 2 ^ 64)%nat.
+Proof.
+  intros k Hk. apply Nat.le_lt_trans with 64%nat; [exact Hk | exact i64_lt].
+Qed.
+
+Definition halted (b : N) (n : nat) (s : Mach) : Prop :=
+  s.(done) = true /\ s.(r0) = 0 /\ s.(mem) = repeat b n.
+
+Lemma more : forall k1 s s1 (P : Mach -> Prop),
+  steps k1 s = Some s1 ->
+  s1.(done) = false ->
+  (exists k s2, steps k s1 = Some s2 /\ P s2) ->
+  exists k s2, steps k s = Some s2 /\ P s2.
+Proof.
+  intros k1 s s1 P H1 Hd [k [s2 [Hk HP]]].
+  exists (k1 + k)%nat, s2.
+  split; [eapply steps_seq; eassumption | exact HP].
+Qed.
+
+(* Seven instructions: copy the base, build the byte splat, compare with 16. *)
+Lemma prologue : forall (bn n : nat),
+  (bn < 256)%nat ->
+  (n < 2 ^ 64)%nat ->
+  steps 7%nat (init bn n) =
+  Some (canon (N.of_nat bn) 0%nat n 28 ((16 <=? n)%nat) ((n =? 16)%nat) false).
+Proof.
+  intros bn n Hb Hn.
+  pose proof (chain_byte bn Hb) as Hc. cbn zeta in Hc.
+  destruct Hc as [Ho8 [Ho16 [Ho32 Hand]]].
+  set (a := N.of_nat bn).
+  apply step_then with
+    (s' := Mk 0 a (N.of_nat n) 0 0 0 0 (repeat 0 n) 4 false false false false).
+  { reflexivity. }
+  { subst a. apply mov_step. }
+  apply step_then with
+    (s' := Mk 0 a (N.of_nat n) 0 0 0 0 (repeat 0 n) 8 false false false false).
+  { reflexivity. }
+  { unfold step_at. cbn [pc]. red_at 4. cbn iota beta. unfold step.
+    cbn [getr setr setpc r1]. subst a. rewrite Hand. reflexivity. }
+  apply step_then with
+    (s' := Mk 0 (a * 0x101) (N.of_nat n) 0 0 0 0 (repeat 0 n) 12 false false false false).
+  { reflexivity. }
+  { unfold step_at. cbn [pc]. red_at 8. cbn iota beta. unfold step.
+    cbn [getr setr setpc r1]. subst a. rewrite Ho8. reflexivity. }
+  apply step_then with
+    (s' := Mk 0 (a * 0x01010101) (N.of_nat n) 0 0 0 0 (repeat 0 n) 16 false false false false).
+  { reflexivity. }
+  { unfold step_at. cbn [pc]. red_at 12. cbn iota beta. unfold step.
+    cbn [getr setr setpc r1]. subst a. rewrite Ho16. reflexivity. }
+  apply step_then with
+    (s' := Mk 0 (a * 0x01010101) (N.of_nat n) (a * 0x0101010101010101) 0
+              0 0 (repeat 0 n) 20 false false false false).
+  { reflexivity. }
+  { unfold step_at. cbn [pc]. red_at 16. cbn iota beta. unfold step.
+    cbn [getr setr setpc r1]. subst a. rewrite Ho32. reflexivity. }
+  apply step_then with
+    (s' := Mk 0 (a * 0x01010101) (N.of_nat n) (a * 0x0101010101010101) 0
+              (a * 0x0101010101010101) (a * 0x0101010101010101)
+              (repeat 0 n) 24 false false false false).
+  { reflexivity. }
+  { unfold step_at. cbn [pc]. red_at 20. cbn iota beta. unfold step.
+    cbn [getr N.eqb setdup r3]. reflexivity. }
+  apply step_then with
+    (s' := canon a 0%nat n 28 ((16 <=? n)%nat) ((n =? 16)%nat) false).
+  { reflexivity. }
+  { unfold step_at. cbn [pc]. red_at 24. cbn iota beta. unfold step.
+    cbn [getr setr setflags setpc r2].
+    change 16 with (N.of_nat 16%nat).
+    rewrite (flag_C n 16%nat) by (first [exact Hn | apply imm_bound; lia]).
+    rewrite (flag_Z n 16%nat) by (first [exact Hn | apply imm_bound; lia]).
+    subst a. unfold canon, lowb, splatb. reflexivity. }
+  { subst a. reflexivity. }
+Qed.
+
+Lemma peel_cmp : forall b filled rest imm (dest next p : N) c z qs (off : Z) w1 w2,
+  b < 256 ->
+  (rest < 2 ^ 64)%nat ->
+  (imm <= 64)%nat ->
+  word_at p = Some w1 ->
+  decode w1 = Some (AddSub true true 64 31 2 (N.of_nat imm)) ->
+  word_at (p + 4) = Some w2 ->
+  decode w2 = Some (Bcond off 3) ->
+  pc_add (p + 4) off = dest ->
+  (p + 4) + 4 = next ->
+  steps 2%nat (canon b filled rest p c z qs) =
+  Some (canon b filled rest
+          (if (imm <=? rest)%nat then next else dest)
+          ((imm <=? rest)%nat) ((rest =? imm)%nat) qs).
+Proof.
+  intros b filled rest imm dest next p c z qs off w1 w2
+         Hb Hr Hi Hw1 Hd1 Hw2 Hd2 Hdest Hnext.
+  apply step_then with
+    (s' := canon b filled rest (p + 4)
+             ((imm <=? rest)%nat) ((rest =? imm)%nat) qs).
+  - reflexivity.
+  - unfold canon. etransitivity.
+    + eapply (step_cmp _ _ _ _ _ _ _ _ _ _ _ rest imm);
+        [exact Hr | apply imm_bound; exact Hi | exact Hw1 | exact Hd1].
+    + unfold canon. reflexivity.
+  - apply step_then with
+      (s' := canon b filled rest
+               (if (imm <=? rest)%nat then next else dest)
+               ((imm <=? rest)%nat) ((rest =? imm)%nat) qs).
+    + reflexivity.
+    + assert (Ht : take_cond ((imm <=? rest)%nat) 3 =
+                   Some (negb ((imm <=? rest)%nat))) by reflexivity.
+      unfold canon. etransitivity.
+      * eapply step_bcond; [exact Hw2 | exact Hd2 | exact Ht].
+      * unfold canon. rewrite Hdest.
+        destruct ((imm <=? rest)%nat); cbn [negb].
+        -- rewrite <- Hnext. reflexivity.
+        -- reflexivity.
+    + reflexivity.
+Qed.
+
+Lemma cmp_hs : forall b filled rest imm (dest next p : N) c z qs (off : Z) w1 w2,
+  b < 256 ->
+  (rest < 2 ^ 64)%nat ->
+  (imm <= 64)%nat ->
+  word_at p = Some w1 ->
+  decode w1 = Some (AddSub true true 64 31 2 (N.of_nat imm)) ->
+  word_at (p + 4) = Some w2 ->
+  decode w2 = Some (Bcond off 2) ->
+  pc_add (p + 4) off = dest ->
+  (p + 4) + 4 = next ->
+  steps 2%nat (canon b filled rest p c z qs) =
+  Some (canon b filled rest
+          (if (imm <=? rest)%nat then dest else next)
+          ((imm <=? rest)%nat) ((rest =? imm)%nat) qs).
+Proof.
+  intros b filled rest imm dest next p c z qs off w1 w2
+         Hb Hr Hi Hw1 Hd1 Hw2 Hd2 Hdest Hnext.
+  apply step_then with
+    (s' := canon b filled rest (p + 4)
+             ((imm <=? rest)%nat) ((rest =? imm)%nat) qs).
+  - reflexivity.
+  - unfold canon. etransitivity.
+    + eapply (step_cmp _ _ _ _ _ _ _ _ _ _ _ rest imm);
+        [exact Hr | apply imm_bound; exact Hi | exact Hw1 | exact Hd1].
+    + unfold canon. reflexivity.
+  - apply step_then with
+      (s' := canon b filled rest
+               (if (imm <=? rest)%nat then dest else next)
+               ((imm <=? rest)%nat) ((rest =? imm)%nat) qs).
+    + reflexivity.
+    + assert (Ht : take_cond ((imm <=? rest)%nat) 2 =
+                   Some ((imm <=? rest)%nat)) by reflexivity.
+      unfold canon. etransitivity.
+      * eapply step_bcond; [exact Hw2 | exact Hd2 | exact Ht].
+      * unfold canon. rewrite Hdest.
+        destruct ((imm <=? rest)%nat); cbn [negb].
+        -- reflexivity.
+        -- rewrite <- Hnext. reflexivity.
+    + reflexivity.
+Qed.
+
+Lemma store_pair : forall b filled rest k (p : N) c z qs w1 w2,
+  b < 256 ->
+  (k <= rest)%nat ->
+  (k <= 8)%nat ->
+  (rest < 2 ^ 64)%nat ->
+  word_at p = Some w1 ->
+  decode w1 = Some (StrPost k 3 0 (Z.of_nat k)) ->
+  word_at (p + 4) = Some w2 ->
+  decode w2 = Some (AddSub true false 64 2 2 (N.of_nat k)) ->
+  steps 2%nat (canon b filled rest p c z qs) =
+  Some (canon b (filled + k)%nat (rest - k) ((p + 4) + 4) c z qs).
+Proof.
+  intros b filled rest k p c z qs w1 w2 Hb Hk H8 Hr Hw1 Hd1 Hw2 Hd2.
+  apply step_then with
+    (s' := Mk (N.of_nat (filled + k)) (lowb b) (N.of_nat rest) (splatb b) 0
+              (splatb b) (splatb b)
+              (repeat b (filled + k) ++ repeat 0 (rest - k))
+              (p + 4) c z false qs).
+  - reflexivity.
+  - unfold canon. eapply step_strk; [exact Hb | exact Hk | exact H8 | exact Hw1 | exact Hd1].
+  - apply step_then with
+      (s' := canon b (filled + k)%nat (rest - k) ((p + 4) + 4) c z qs).
+    + reflexivity.
+    + unfold canon. etransitivity.
+      * eapply step_sub2; [exact Hk | exact Hr | exact Hw2 | exact Hd2].
+      * unfold canon. reflexivity.
+    + reflexivity.
+Qed.
+
+Lemma from_152 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 2)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 152 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  destruct rest as [|rest1].
+  - assert (Hgo : steps 3%nat (canon b filled 0%nat 152 c z qs) =
+      Some (Mk 0 (lowb b) (N.of_nat 0) (splatb b) 0
+               (splatb b) (splatb b)
+               (repeat b filled ++ repeat 0 0)
+               164 c z true qs)).
+    { unfold canon.
+      apply step_then with
+        (s' := Mk (N.of_nat filled) (lowb b) (N.of_nat 0) (splatb b) 0
+                  (splatb b) (splatb b)
+                  (repeat b filled ++ repeat 0 0)
+                  (if (0 =? 0)%nat then pc_add 152 2%Z else 152 + 4)
+                  c z false qs).
+      - reflexivity.
+      - word_pair 152 (Cbz 2 2%Z)
+          ltac:(fun Hw Hd => eapply step_cbz; [exact Hw | exact Hd]).
+      - cbn [Nat.eqb].
+        replace (pc_add 152 2%Z) with 160 by (vm_compute; reflexivity).
+        apply epilogue. }
+    exists 3%nat.
+    eexists. split; [exact Hgo|].
+    unfold halted. cbn [done r0 mem].
+    split. reflexivity.
+    split. reflexivity.
+    rewrite app_nil_r. rewrite Nat.add_0_r. reflexivity.
+  - destruct rest1; [|lia].
+    assert (Hgo : steps 4%nat (canon b filled 1%nat 152 c z qs) =
+      Some (Mk 0 (lowb b) (N.of_nat 1) (splatb b) 0
+               (splatb b) (splatb b)
+               (repeat b (filled + 1) ++ repeat 0 0)
+               164 c z true qs)).
+    { unfold canon.
+      apply step_then with
+        (s' := Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+                  (splatb b) (splatb b)
+                  (repeat b filled ++ repeat 0 1)
+                  (if (1 =? 0)%nat then pc_add 152 2%Z else 152 + 4)
+                  c z false qs).
+      - reflexivity.
+      - word_pair 152 (Cbz 2 2%Z)
+          ltac:(fun Hw Hd => eapply step_cbz; [exact Hw | exact Hd]).
+      - cbn [Nat.eqb].
+        apply step_then with
+          (s' := Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+                    (splatb b) (splatb b)
+                    (repeat b (filled + 1) ++ repeat 0 (1 - 1))
+                    ((152 + 4) + 4) c z false qs).
+        + reflexivity.
+        + word_pair (152 + 4) (StrB 3 0 0)
+            ltac:(fun Hw Hd =>
+              eapply step_strb; [exact Hb | lia | exact Hw | exact Hd]).
+        + replace ((152 + 4) + 4) with 160 by reflexivity.
+          replace (1 - 1)%nat with 0%nat by lia.
+          apply epilogue. }
+    exists 4%nat. eexists. split; [exact Hgo|].
+    unfold halted. cbn [done r0 mem].
+    split. reflexivity.
+    split. reflexivity.
+    rewrite app_nil_r. reflexivity.
+Qed.
+(* --- bit tests for a remainder under 16 --- *)
+
+Lemma bits_lt16 : forall n,
+  (n < 16)%nat ->
+  N.testbit (N.of_nat n) 3 = (8 <=? n)%nat /\
+  N.testbit (N.of_nat n) 2 = (4 <=? Nat.modulo n 8)%nat /\
+  N.testbit (N.of_nat n) 1 = (2 <=? Nat.modulo n 4)%nat /\
+  N.testbit (N.of_nat n) 0 = Nat.odd n.
+Proof.
+  intros n Hn.
+  set (f := fun n =>
+    Bool.eqb (N.testbit (N.of_nat n) 3) ((8 <=? n)%nat) &&
+    Bool.eqb (N.testbit (N.of_nat n) 2) ((4 <=? Nat.modulo n 8)%nat) &&
+    Bool.eqb (N.testbit (N.of_nat n) 1) ((2 <=? Nat.modulo n 4)%nat) &&
+    Bool.eqb (N.testbit (N.of_nat n) 0) (Nat.odd n)).
+  assert (Hf : f n = true).
+  { apply (forallb_seq_from f 0%nat 16%nat n).
+    - exact bit_table.
+    - lia. }
+  unfold f in Hf.
+  apply andb_true_iff in Hf. destruct Hf as [Hf H0].
+  apply andb_true_iff in Hf. destruct Hf as [Hf H1].
+  apply andb_true_iff in Hf. destruct Hf as [H3 H2].
+  apply eqb_prop in H3. apply eqb_prop in H2.
+  apply eqb_prop in H1. apply eqb_prop in H0.
+  split; [exact H3 | split; [exact H2 | split; [exact H1 | exact H0]]].
+Qed.
+
+Lemma bit3_lt16 : forall n, (n < 16)%nat ->
+  N.testbit (N.of_nat n) 3 = (8 <=? n)%nat.
+Proof. intros n Hn. apply bits_lt16. exact Hn. Qed.
+
+Lemma bit2_lt8 : forall n, (n < 8)%nat ->
+  N.testbit (N.of_nat n) 2 = (4 <=? n)%nat.
+Proof.
+  intros n Hn.
+  destruct (bits_lt16 n ltac:(lia)) as [_ [H2 _]].
+  rewrite H2. rewrite (Nat.mod_small n 8 Hn). reflexivity.
+Qed.
+
+Lemma bit1_lt4 : forall n, (n < 4)%nat ->
+  N.testbit (N.of_nat n) 1 = (2 <=? n)%nat.
+Proof.
+  intros n Hn.
+  destruct (bits_lt16 n ltac:(lia)) as [_ [_ [H1 _]]].
+  rewrite H1. rewrite (Nat.mod_small n 4 Hn). reflexivity.
+Qed.
+
+Lemma bit0_lt2 : forall n, (n < 2)%nat ->
+  N.testbit (N.of_nat n) 0 = (n =? 1)%nat.
+Proof.
+  intros n Hn.
+  destruct (bits_lt16 n ltac:(lia)) as [_ [_ [_ H0]]].
+  rewrite H0.
+  destruct n as [|n]; [reflexivity|].
+  destruct n as [|n]; [reflexivity|lia].
+Qed.
+
+(* One cbz. Taken when the remainder is zero. *)
+Lemma step1_cbz : forall b filled rest (p dest next : N) (off : Z) c z qs w,
+  word_at p = Some w ->
+  decode w = Some (Cbz 2 off) ->
+  pc_add p off = dest ->
+  p + 4 = next ->
+  steps 1%nat (canon b filled rest p c z qs) =
+  Some (canon b filled rest (if (rest =? 0)%nat then dest else next) c z qs).
+Proof.
+  intros b filled rest p dest next off c z qs w Hw Hd Hdest Hnext.
+  apply step_then with
+    (s' := canon b filled rest (if (rest =? 0)%nat then dest else next) c z qs).
+  - reflexivity.
+  - unfold canon. etransitivity.
+    + eapply step_cbz; [exact Hw | exact Hd].
+    + unfold canon. rewrite Hdest.
+      destruct (rest =? 0)%nat; [reflexivity | rewrite <- Hnext; reflexivity].
+  - reflexivity.
+Qed.
+
+(* One tbz. The branch is taken when the tested bit is clear. *)
+Lemma step1_tbz : forall b filled rest (p bit dest next : N) (off : Z) (go : bool)
+                         c z qs w,
+  word_at p = Some w ->
+  decode w = Some (Tbz 2 bit off) ->
+  pc_add p off = dest ->
+  p + 4 = next ->
+  N.testbit (N.of_nat rest) bit = go ->
+  steps 1%nat (canon b filled rest p c z qs) =
+  Some (canon b filled rest (if go then next else dest) c z qs).
+Proof.
+  intros b filled rest p bit dest next off go c z qs w Hw Hd Hdest Hnext Hbit.
+  apply step_then with
+    (s' := canon b filled rest (if go then next else dest) c z qs).
+  - reflexivity.
+  - unfold canon. etransitivity.
+    + eapply step_tbz; [exact Hw | exact Hd].
+    + unfold canon. rewrite Hbit, Hdest.
+      destruct go; [rewrite <- Hnext; reflexivity | reflexivity].
+  - reflexivity.
+Qed.
+
+(* Reach ret with a filled buffer and no bytes left. *)
+Lemma finish0 : forall k b n r0 r1 r2 r3 lo hi c z qs s0,
+  steps k s0 =
+    Some (Mk r0 r1 r2 r3 0 lo hi (repeat b n ++ repeat 0 0) 160 c z false qs) ->
+  exists k' (s : Mach), steps k' s0 = Some s /\ halted b n s.
+Proof.
+  intros k b n r0 r1 r2 r3 lo hi c z qs s0 H.
+  exists (k + 2)%nat.
+  eexists. split.
+  - eapply steps_seq; [exact H | reflexivity | apply epilogue].
+  - unfold halted.
+    split. reflexivity.
+    split. reflexivity.
+    apply app_nil_r.
+Qed.
+
+Lemma two_nops : forall b filled rest c z qs,
+  steps 2%nat (canon b filled rest 40 c z qs) =
+  Some (canon b filled rest 48 c z qs).
+Proof.
+  intros b filled rest c z qs.
+  apply step_then with (s' := canon b filled rest 44 c z qs).
+  - reflexivity.
+  - unfold canon. etransitivity.
+    + word_pair 40 Nop ltac:(fun Hw Hd => eapply step_nop; [exact Hw | exact Hd]).
+    + unfold canon. reflexivity.
+  - apply step_then with (s' := canon b filled rest 48 c z qs).
+    + reflexivity.
+    + unfold canon. etransitivity.
+      * word_pair 44 Nop ltac:(fun Hw Hd => eapply step_nop; [exact Hw | exact Hd]).
+      * unfold canon. reflexivity.
+    + reflexivity.
+Qed.
+
+(* str q0, [x0], #16; sub x2, x2, #16; cmp; b.hs. Four instructions. *)
+Lemma body16 : forall b filled rest c z qs,
+  b < 256 ->
+  (16 <= rest)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  steps 4%nat (canon b filled rest 84 c z qs) =
+  Some (canon b (filled + 16)%nat (rest - 16)
+          (if (16 <=? rest - 16)%nat then 84 else 100)
+          ((16 <=? rest - 16)%nat)
+          (((rest - 16) =? 16)%nat) true).
+Proof.
+  intros b filled rest c z qs Hb H16 Hlt.
+  assert (Hr : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hr16 : (rest - 16 < 2 ^ 64)%nat) by lia.
+  assert (Hi : (16 <= 64)%nat) by lia.
+  apply step_then with
+    (s' := Mk (N.of_nat (filled + 16)) (lowb b) (N.of_nat rest) (splatb b) 0
+              (splatb b) (splatb b)
+              (repeat b (filled + 16) ++ repeat 0 (rest - 16))
+              (84 + 4) c z false true).
+  { reflexivity. }
+  { unfold canon.
+    word_pair 84 (StrQ 0 0 16%Z)
+      ltac:(fun Hw Hd => eapply step_strq; [exact Hb | exact H16 | exact Hw | exact Hd]). }
+  apply step_then with
+    (s' := canon b (filled + 16)%nat (rest - 16) 92 c z true).
+  { reflexivity. }
+  { etransitivity.
+    - word_pair (84 + 4) (AddSub true false 64 2 2 (N.of_nat 16))
+        ltac:(fun Hw Hd => eapply step_sub2; [exact H16 | exact Hr | exact Hw | exact Hd]).
+    - unfold canon. reflexivity. }
+  word_pair 92 (AddSub true true 64 31 2 (N.of_nat 16))
+    ltac:(fun Hw Hd =>
+      word_pair 96 (Bcond (-3)%Z 2)
+        ltac:(fun Hw2 Hd2 =>
+          assert (Hdest : pc_add (92 + 4) (-3)%Z = 84) by (vm_compute; reflexivity);
+          assert (Hnext : (92 + 4) + 4 = 100) by reflexivity;
+          apply (cmp_hs b (filled + 16)%nat (rest - 16) 16%nat 84 100 92
+                        c z true (-3)%Z _ _
+                        Hb Hr16 Hi Hw Hd Hw2 Hd2 Hdest Hnext))).
+Qed.
+
+Lemma run16 : forall q b filled r c z qs,
+  b < 256 ->
+  (r < 16)%nat ->
+  (filled + (16 * S q + r) < 2 ^ 64)%nat ->
+  steps (4 * S q)%nat
+    (canon b filled (16 * S q + r)%nat 84 c z qs) =
+  Some (canon b (filled + 16 * S q)%nat r 100 false false true).
+Proof.
+  induction q as [|q IH]; intros b filled r c z qs Hb Hr Hlt.
+  - replace (4 * S 0)%nat with 4%nat by reflexivity.
+    replace (16 * S 0 + r)%nat with (16 + r)%nat by lia.
+    replace (filled + 16 * S 0)%nat with (filled + 16)%nat by lia.
+    assert (Hge : (16 <= 16 + r)%nat) by lia.
+    assert (Hbody := body16 b filled (16 + r)%nat c z qs Hb Hge ltac:(lia)).
+    replace ((16 + r) - 16)%nat with r in Hbody by lia.
+    rewrite (proj2 (Nat.leb_gt 16 r) Hr) in Hbody.
+    assert (Heqb : (r =? 16)%nat = false) by (apply Nat.eqb_neq; lia).
+    rewrite Heqb in Hbody.
+    exact Hbody.
+  - replace (4 * S (S q))%nat with (4 + 4 * S q)%nat by lia.
+    assert (Hge : (16 <= 16 * S (S q) + r)%nat) by lia.
+    assert (Hbody := body16 b filled (16 * S (S q) + r)%nat c z qs Hb Hge Hlt).
+    replace ((16 * S (S q) + r) - 16)%nat with (16 * S q + r)%nat in Hbody by lia.
+    assert (Hle : (16 <= 16 * S q + r)%nat) by lia.
+    rewrite (proj2 (Nat.leb_le 16 (16 * S q + r)) Hle) in Hbody.
+    cbn iota in Hbody.
+    replace (filled + 16 * S (S q))%nat with ((filled + 16) + 16 * S q)%nat by lia.
+    eapply steps_seq; [exact Hbody | apply canon_done |].
+    apply IH; [exact Hb | exact Hr | lia].
+Qed.
+
+(* stp; stp; add; sub; cmp; b.hs. Six instructions, 64 bytes. *)
+Lemma body64 : forall b filled rest c z qs,
+  b < 256 ->
+  (64 <= rest)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  steps 6%nat (canon b filled rest 48 c z qs) =
+  Some (canon b (filled + 64)%nat (rest - 64)
+          (if (64 <=? rest - 64)%nat then 48 else 72)
+          ((64 <=? rest - 64)%nat)
+          (((rest - 64) =? 64)%nat) true).
+Proof.
+  intros b filled rest c z qs Hb H64 Hlt.
+  assert (Hr : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Ha : (filled + 64 < 2 ^ 64)%nat) by lia.
+  assert (Hr64 : (rest - 64 < 2 ^ 64)%nat) by lia.
+  assert (Hi : (64 <= 64)%nat) by lia.
+  apply step_then with
+    (s' := Mk (N.of_nat filled) (lowb b) (N.of_nat rest) (splatb b) 0
+              (splatb b) (splatb b)
+              (repeat b (filled + 32) ++ repeat 0 (rest - 32))
+              52 c z false true).
+  { reflexivity. }
+  { apply stp48; [exact Hb | lia]. }
+  apply step_then with
+    (s' := Mk (N.of_nat filled) (lowb b) (N.of_nat rest) (splatb b) 0
+              (splatb b) (splatb b)
+              (repeat b (filled + 32 + 32) ++ repeat 0 ((rest - 32) - 32))
+              (52 + 4) c z false true).
+  { reflexivity. }
+  { word_pair 52 (StpQ 0 0 0 (Z.of_nat 32))
+      ltac:(fun Hw Hd => eapply step_stp; [exact Hb | lia | exact Hw | exact Hd]). }
+  apply step_then with
+    (s' := Mk (N.of_nat (filled + 64)) (lowb b) (N.of_nat rest) (splatb b) 0
+              (splatb b) (splatb b)
+              (repeat b (filled + 32 + 32) ++ repeat 0 ((rest - 32) - 32))
+              ((52 + 4) + 4) c z false true).
+  { reflexivity. }
+  { word_pair (52 + 4) (AddSub false false 64 0 0 (N.of_nat 64))
+      ltac:(fun Hw Hd =>
+        eapply (step_add0 (lowb b) (N.of_nat rest) (splatb b) 0
+                  (splatb b) (splatb b)
+                  (repeat b (filled + 32 + 32) ++ repeat 0 ((rest - 32) - 32))
+                  (52 + 4) c z true filled 64%nat);
+        [exact Ha | exact Hw | exact Hd]). }
+  apply step_then with
+    (s' := canon b (filled + 64)%nat (rest - 64) 64 c z true).
+  { reflexivity. }
+  { etransitivity.
+    - word_pair ((52 + 4) + 4) (AddSub true false 64 2 2 (N.of_nat 64))
+        ltac:(fun Hw Hd => eapply step_sub2; [exact H64 | exact Hr | exact Hw | exact Hd]).
+    - unfold canon.
+      replace (filled + 32 + 32)%nat with (filled + 64)%nat by lia.
+      replace ((rest - 32) - 32)%nat with (rest - 64)%nat by lia.
+      replace (((52 + 4) + 4) + 4) with 64 by reflexivity.
+      reflexivity. }
+  word_pair 64 (AddSub true true 64 31 2 (N.of_nat 64))
+    ltac:(fun Hw Hd =>
+      word_pair 68 (Bcond (-5)%Z 2)
+        ltac:(fun Hw2 Hd2 =>
+          assert (Hdest : pc_add (64 + 4) (-5)%Z = 48) by (vm_compute; reflexivity);
+          assert (Hnext : (64 + 4) + 4 = 72) by reflexivity;
+          apply (cmp_hs b (filled + 64)%nat (rest - 64) 64%nat 48 72 64
+                        c z true (-5)%Z _ _
+                        Hb Hr64 Hi Hw Hd Hw2 Hd2 Hdest Hnext))).
+Qed.
+
+Lemma run64 : forall q b filled r c z qs,
+  b < 256 ->
+  (r < 64)%nat ->
+  (filled + (64 * S q + r) < 2 ^ 64)%nat ->
+  steps (6 * S q)%nat
+    (canon b filled (64 * S q + r)%nat 48 c z qs) =
+  Some (canon b (filled + 64 * S q)%nat r 72 false false true).
+Proof.
+  induction q as [|q IH]; intros b filled r c z qs Hb Hr Hlt.
+  - replace (6 * S 0)%nat with 6%nat by reflexivity.
+    replace (64 * S 0 + r)%nat with (64 + r)%nat by lia.
+    replace (filled + 64 * S 0)%nat with (filled + 64)%nat by lia.
+    assert (Hge : (64 <= 64 + r)%nat) by lia.
+    assert (Hsum : (filled + (64 + r) < 2 ^ 64)%nat) by lia.
+    assert (Hbody := body64 b filled (64 + r)%nat c z qs Hb Hge Hsum).
+    replace ((64 + r) - 64)%nat with r in Hbody by lia.
+    rewrite (proj2 (Nat.leb_gt 64 r) Hr) in Hbody.
+    assert (Heqb : (r =? 64)%nat = false) by (apply Nat.eqb_neq; lia).
+    rewrite Heqb in Hbody.
+    exact Hbody.
+  - replace (6 * S (S q))%nat with (6 + 6 * S q)%nat by lia.
+    assert (Hge : (64 <= 64 * S (S q) + r)%nat) by lia.
+    assert (Hbody := body64 b filled (64 * S (S q) + r)%nat c z qs Hb Hge Hlt).
+    replace ((64 * S (S q) + r) - 64)%nat with (64 * S q + r)%nat in Hbody by lia.
+    assert (Hle : (64 <= 64 * S q + r)%nat) by lia.
+    rewrite (proj2 (Nat.leb_le 64 (64 * S q + r)) Hle) in Hbody.
+    cbn iota in Hbody.
+    replace (filled + 64 * S (S q))%nat with ((filled + 64) + 64 * S q)%nat by lia.
+    eapply steps_seq; [exact Hbody | apply canon_done |].
+    apply IH; [exact Hb | exact Hr | lia].
+Qed.
+(* Reduce a branch that has already become if true / if false. *)
+Ltac land_if H :=
+  cbn [negb] in H;
+  repeat match type of H with
+  | context[if true then ?a else ?b] => change (if true then a else b) with a in H
+  | context[if false then ?a else ?b] => change (if false then a else b) with b in H
+  end.
+
+(* cmp / b.lo, then either the store or the forward label. rest < 2 * imm. *)
+Lemma from_136 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 4)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 136 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hi : (2 <= 64)%nat) by lia.
+  word_pair 136 (AddSub true true 64 31 2 (N.of_nat 2)) ltac:(fun _ _ => idtac).
+  word_pair (136 + 4) (Bcond 3%Z 3) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add (136 + 4) 3%Z = 152) by (vm_compute; reflexivity).
+  assert (Hnext : (136 + 4) + 4 = 144) by reflexivity.
+  assert (Hpeel := peel_cmp b filled rest 2%nat 152 144 136 c z qs 3%Z _ _
+                     Hb Hrb Hi Hword Hdec Hword0 Hdec0 Hdest Hnext).
+  destruct (Nat.leb 2 rest) eqn:Hge.
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    assert (Hk : (2 <= rest)%nat) by (apply Nat.leb_le; exact Hge).
+    assert (H8 : (2 <= 8)%nat) by lia.
+    word_pair 144 (StrPost 2%nat 3 0 (Z.of_nat 2)) ltac:(fun _ _ => idtac).
+    word_pair (144 + 4) (AddSub true false 64 2 2 (N.of_nat 2)) ltac:(fun _ _ => idtac).
+    assert (Hst := store_pair b filled rest 2%nat 144 true ((rest =? 2)%nat) qs _ _
+                     Hb Hk H8 Hrb Hword1 Hdec1 Hword2 Hdec2).
+    replace ((144 + 4) + 4) with 152 in Hst by reflexivity.
+    eapply more; [exact Hst | apply canon_done |].
+    destruct (from_152 b (filled + 2)%nat (rest - 2) true ((rest =? 2)%nat) qs
+                Hb ltac:(lia) ltac:(lia)) as [k [s [Hk2 Hh]]].
+    replace ((filled + 2) + (rest - 2))%nat with (filled + rest)%nat in Hh by lia.
+    exists k, s. split; [exact Hk2 | exact Hh].
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    apply from_152; [exact Hb | apply Nat.leb_gt; exact Hge | exact Hlt].
+Qed.
+
+Lemma from_120 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 8)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 120 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hi : (4 <= 64)%nat) by lia.
+  word_pair 120 (AddSub true true 64 31 2 (N.of_nat 4)) ltac:(fun _ _ => idtac).
+  word_pair (120 + 4) (Bcond 3%Z 3) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add (120 + 4) 3%Z = 136) by (vm_compute; reflexivity).
+  assert (Hnext : (120 + 4) + 4 = 128) by reflexivity.
+  assert (Hpeel := peel_cmp b filled rest 4%nat 136 128 120 c z qs 3%Z _ _
+                     Hb Hrb Hi Hword Hdec Hword0 Hdec0 Hdest Hnext).
+  destruct (4 <=? rest)%nat eqn:Hge.
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    assert (Hk : (4 <= rest)%nat) by (apply Nat.leb_le; exact Hge).
+    assert (H8 : (4 <= 8)%nat) by lia.
+    word_pair 128 (StrPost 4%nat 3 0 (Z.of_nat 4)) ltac:(fun _ _ => idtac).
+    word_pair (128 + 4) (AddSub true false 64 2 2 (N.of_nat 4)) ltac:(fun _ _ => idtac).
+    assert (Hst := store_pair b filled rest 4%nat 128 true ((rest =? 4)%nat) qs _ _
+                     Hb Hk H8 Hrb Hword1 Hdec1 Hword2 Hdec2).
+    replace ((128 + 4) + 4) with 136 in Hst by reflexivity.
+    eapply more; [exact Hst | apply canon_done |].
+    destruct (from_136 b (filled + 4)%nat (rest - 4) true ((rest =? 4)%nat) qs
+                Hb ltac:(lia) ltac:(lia)) as [k [s [Hk2 Hh]]].
+    replace ((filled + 4) + (rest - 4))%nat with (filled + rest)%nat in Hh by lia.
+    exists k, s. split; [exact Hk2 | exact Hh].
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    apply from_136; [exact Hb | apply Nat.leb_gt; exact Hge | exact Hlt].
+Qed.
+
+Lemma from_104 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 16)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 104 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hi : (8 <= 64)%nat) by lia.
+  word_pair 104 (AddSub true true 64 31 2 (N.of_nat 8)) ltac:(fun _ _ => idtac).
+  word_pair (104 + 4) (Bcond 3%Z 3) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add (104 + 4) 3%Z = 120) by (vm_compute; reflexivity).
+  assert (Hnext : (104 + 4) + 4 = 112) by reflexivity.
+  assert (Hpeel := peel_cmp b filled rest 8%nat 120 112 104 c z qs 3%Z _ _
+                     Hb Hrb Hi Hword Hdec Hword0 Hdec0 Hdest Hnext).
+  destruct (8 <=? rest)%nat eqn:Hge.
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    assert (Hk : (8 <= rest)%nat) by (apply Nat.leb_le; exact Hge).
+    assert (H8 : (8 <= 8)%nat) by lia.
+    word_pair 112 (StrPost 8%nat 3 0 (Z.of_nat 8)) ltac:(fun _ _ => idtac).
+    word_pair (112 + 4) (AddSub true false 64 2 2 (N.of_nat 8)) ltac:(fun _ _ => idtac).
+    assert (Hst := store_pair b filled rest 8%nat 112 true ((rest =? 8)%nat) qs _ _
+                     Hb Hk H8 Hrb Hword1 Hdec1 Hword2 Hdec2).
+    replace ((112 + 4) + 4) with 120 in Hst by reflexivity.
+    eapply more; [exact Hst | apply canon_done |].
+    destruct (from_120 b (filled + 8)%nat (rest - 8) true ((rest =? 8)%nat) qs
+                Hb ltac:(lia) ltac:(lia)) as [k [s [Hk2 Hh]]].
+    replace ((filled + 8) + (rest - 8))%nat with (filled + rest)%nat in Hh by lia.
+    exists k, s. split; [exact Hk2 | exact Hh].
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    apply from_120; [exact Hb | apply Nat.leb_gt; exact Hge | exact Hlt].
+Qed.
+
+Lemma from_100 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 16)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 100 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  word_pair 100 (Cbz 2 15%Z) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add 100 15%Z = 160) by (vm_compute; reflexivity).
+  assert (Hnext : 100 + 4 = 104) by reflexivity.
+  assert (Hcb := step1_cbz b filled rest 100 160 104 15%Z c z qs _
+                   Hword Hdec Hdest Hnext).
+  destruct (rest =? 0)%nat eqn:Hz.
+  - land_if Hcb.
+    apply Nat.eqb_eq in Hz. subst rest.
+    replace (filled + 0)%nat with filled by lia.
+    apply finish0 in Hcb. exact Hcb.
+  - land_if Hcb.
+    eapply more; [exact Hcb | apply canon_done |].
+    apply from_104; [exact Hb | exact Hr | exact Hlt].
+Qed.
+
+(* Sixteen-byte loop, then the tail. rest is at least 16 and below 64. *)
+Lemma from_84 : forall b filled rest c z qs,
+  b < 256 ->
+  (16 <= rest)%nat ->
+  (rest < 64)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 84 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hge Hlt64 Hlt.
+  pose proof (Nat.div_mod rest 16 ltac:(lia)) as Hsplit.
+  assert (Hmod : (rest mod 16 < 16)%nat) by (apply Nat.mod_upper_bound; lia).
+  assert (Hpos : (0 < rest / 16)%nat) by (apply Nat.div_str_pos; lia).
+  destruct (rest / 16)%nat as [|q] eqn:Hq; [lia|].
+  assert (Hbd : (filled + (16 * S q + rest mod 16) < 2 ^ 64)%nat)
+    by (rewrite <- Hsplit; exact Hlt).
+  rewrite Hsplit.
+  assert (Hrun := run16 q b filled (rest mod 16) c z qs Hb Hmod Hbd).
+  eapply more; [exact Hrun | apply canon_done |].
+  assert (Hbd2 : ((filled + 16 * S q) + rest mod 16 < 2 ^ 64)%nat)
+    by (rewrite <- Nat.add_assoc; exact Hbd).
+  destruct (from_100 b (filled + 16 * S q)%nat (rest mod 16) false false true
+              Hb Hmod Hbd2) as [k [s [Hk Hh]]].
+  assert (E : ((filled + 16 * S q) + rest mod 16 = filled + (16 * S q + rest mod 16))%nat)
+    by (rewrite Nat.add_assoc; reflexivity).
+  rewrite E in Hh.
+  exists k, s. split; [exact Hk | exact Hh].
+Qed.
+
+Lemma from_72 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 64)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 72 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  word_pair 72 (Cbz 2 22%Z) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add 72 22%Z = 160) by (vm_compute; reflexivity).
+  assert (Hnext : 72 + 4 = 76) by reflexivity.
+  assert (Hcb := step1_cbz b filled rest 72 160 76 22%Z c z qs _
+                   Hword Hdec Hdest Hnext).
+  destruct (rest =? 0)%nat eqn:Hz.
+  - land_if Hcb.
+    apply Nat.eqb_eq in Hz. subst rest.
+    replace (filled + 0)%nat with filled by lia.
+    apply finish0 in Hcb. exact Hcb.
+  - land_if Hcb.
+    eapply more; [exact Hcb | apply canon_done |].
+    assert (Hi : (16 <= 64)%nat) by lia.
+    word_pair 76 (AddSub true true 64 31 2 (N.of_nat 16)) ltac:(fun _ _ => idtac).
+    word_pair (76 + 4) (Bcond 6%Z 3) ltac:(fun _ _ => idtac).
+    assert (Hd2 : pc_add (76 + 4) 6%Z = 104) by (vm_compute; reflexivity).
+    assert (Hn2 : (76 + 4) + 4 = 84) by reflexivity.
+    assert (Hpeel := peel_cmp b filled rest 16%nat 104 84 76 c z qs 6%Z _ _
+                       Hb Hrb Hi Hword0 Hdec0 Hword1 Hdec1 Hd2 Hn2).
+    destruct (16 <=? rest)%nat eqn:H16.
+    + land_if Hpeel.
+      eapply more; [exact Hpeel | apply canon_done |].
+      apply from_84; [exact Hb | apply Nat.leb_le; exact H16 | exact Hr | exact Hlt].
+    + land_if Hpeel.
+      eapply more; [exact Hpeel | apply canon_done |].
+      apply from_104; [exact Hb | apply Nat.leb_gt; exact H16 | exact Hlt].
+Qed.
+
+(* Sixty-four-byte loop, then whatever is left. *)
+Lemma from_48 : forall b filled rest c z qs,
+  b < 256 ->
+  (64 <= rest)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 48 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hge Hlt.
+  pose proof (Nat.div_mod rest 64 ltac:(lia)) as Hsplit.
+  assert (Hmod : (rest mod 64 < 64)%nat) by (apply Nat.mod_upper_bound; lia).
+  assert (Hpos : (0 < rest / 64)%nat) by (apply Nat.div_str_pos; lia).
+  destruct (rest / 64)%nat as [|q] eqn:Hq; [lia|].
+  assert (Hbd : (filled + (64 * S q + rest mod 64) < 2 ^ 64)%nat)
+    by (rewrite <- Hsplit; exact Hlt).
+  rewrite Hsplit.
+  assert (Hrun := run64 q b filled (rest mod 64) c z qs Hb Hmod Hbd).
+  eapply more; [exact Hrun | apply canon_done |].
+  assert (Hbd2 : ((filled + 64 * S q) + rest mod 64 < 2 ^ 64)%nat)
+    by (rewrite <- Nat.add_assoc; exact Hbd).
+  destruct (from_72 b (filled + 64 * S q)%nat (rest mod 64) false false true
+              Hb Hmod Hbd2) as [k [s [Hk Hh]]].
+  assert (E : ((filled + 64 * S q) + rest mod 64 = filled + (64 * S q + rest mod 64))%nat)
+    by (rewrite Nat.add_assoc; reflexivity).
+  rewrite E in Hh.
+  exists k, s. split; [exact Hk | exact Hh].
+Qed.
+
+Lemma from_32 : forall b filled rest c z qs,
+  b < 256 ->
+  (16 <= rest)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 32 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hge Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hi : (64 <= 64)%nat) by lia.
+  word_pair 32 (AddSub true true 64 31 2 (N.of_nat 64)) ltac:(fun _ _ => idtac).
+  word_pair (32 + 4) (Bcond 12%Z 3) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add (32 + 4) 12%Z = 84) by (vm_compute; reflexivity).
+  assert (Hnext : (32 + 4) + 4 = 40) by reflexivity.
+  assert (Hpeel := peel_cmp b filled rest 64%nat 84 40 32 c z qs 12%Z _ _
+                     Hb Hrb Hi Hword Hdec Hword0 Hdec0 Hdest Hnext).
+  destruct (64 <=? rest)%nat eqn:H64.
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    eapply more; [apply two_nops | apply canon_done |].
+    apply from_48; [exact Hb | apply Nat.leb_le; exact H64 | exact Hlt].
+  - land_if Hpeel.
+    eapply more; [exact Hpeel | apply canon_done |].
+    apply from_84; [exact Hb | exact Hge | apply Nat.leb_gt; exact H64 | exact Hlt].
+Qed.
+
+(* Last bit of the short path: tbz #0, maybe one byte, then ret. *)
+Lemma from_204 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 2)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 204 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hbit := bit0_lt2 rest Hr).
+  word_pair 204 (Tbz 2 0 (-11)%Z) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add 204 (-11)%Z = 160) by (vm_compute; reflexivity).
+  assert (Hnext : 204 + 4 = 208) by reflexivity.
+  assert (Htb := step1_tbz b filled rest 204 0 160 208 (-11)%Z
+                   ((rest =? 1)%nat) c z qs _
+                   Hword Hdec Hdest Hnext Hbit).
+  destruct rest as [|rest1].
+  - cbn [Nat.eqb] in Htb. land_if Htb.
+    replace (filled + 0)%nat with filled by lia.
+    apply finish0 in Htb. exact Htb.
+  - destruct rest1 as [|rest2]; [|lia].
+    cbn [Nat.eqb] in Htb. land_if Htb.
+    eapply more; [exact Htb | apply canon_done |].
+    assert (Hst : steps 1%nat (canon b filled 1%nat 208 c z qs) =
+      Some (Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+               (splatb b) (splatb b)
+               (repeat b (filled + 1) ++ repeat 0 (1 - 1))
+               (208 + 4) c z false qs)).
+    { apply step_then with
+        (s' := Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+                  (splatb b) (splatb b)
+                  (repeat b (filled + 1) ++ repeat 0 (1 - 1))
+                  (208 + 4) c z false qs).
+      - reflexivity.
+      - unfold canon.
+        word_pair 208 (StrB 3 0 0)
+          ltac:(fun Hw Hd => eapply step_strb; [exact Hb | lia | exact Hw | exact Hd]).
+      - reflexivity. }
+    replace (1 - 1)%nat with 0%nat in Hst by lia.
+    replace (208 + 4) with 212 in Hst by reflexivity.
+    assert (Hbr : steps 1%nat
+        (Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+            (splatb b) (splatb b)
+            (repeat b (filled + 1) ++ repeat 0 0)
+            212 c z false qs) =
+      Some (Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+               (splatb b) (splatb b)
+               (repeat b (filled + 1) ++ repeat 0 0)
+               160 c z false qs)).
+    { apply step_then with
+        (s' := Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+                  (splatb b) (splatb b)
+                  (repeat b (filled + 1) ++ repeat 0 0)
+                  160 c z false qs).
+      - reflexivity.
+      - etransitivity.
+        + word_pair 212 (B (-13)%Z)
+            ltac:(fun Hw Hd => eapply step_b; [exact Hw | exact Hd]).
+        + replace (pc_add 212 (-13)%Z) with 160 by (vm_compute; reflexivity).
+          reflexivity.
+      - reflexivity. }
+    assert (Hgo : steps 2%nat (canon b filled 1%nat 208 c z qs) =
+      Some (Mk (N.of_nat filled) (lowb b) (N.of_nat 1) (splatb b) 0
+               (splatb b) (splatb b)
+               (repeat b (filled + 1) ++ repeat 0 0)
+               160 c z false qs)).
+    { replace 2%nat with (1 + 1)%nat by reflexivity.
+      eapply steps_seq; [exact Hst | reflexivity | exact Hbr]. }
+    apply finish0 in Hgo. exact Hgo.
+Qed.
+
+Lemma from_192 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 4)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 192 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hbit := bit1_lt4 rest Hr).
+  word_pair 192 (Tbz 2 1 3%Z) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add 192 3%Z = 204) by (vm_compute; reflexivity).
+  assert (Hnext : 192 + 4 = 196) by reflexivity.
+  assert (Htb := step1_tbz b filled rest 192 1 204 196 3%Z
+                   ((2 <=? rest)%nat) c z qs _
+                   Hword Hdec Hdest Hnext Hbit).
+  destruct (2 <=? rest)%nat eqn:Hge.
+  - land_if Htb.
+    eapply more; [exact Htb | apply canon_done |].
+    assert (Hk : (2 <= rest)%nat) by (apply Nat.leb_le; exact Hge).
+    assert (H8 : (2 <= 8)%nat) by lia.
+    word_pair 196 (StrPost 2%nat 3 0 (Z.of_nat 2)) ltac:(fun _ _ => idtac).
+    word_pair (196 + 4) (AddSub true false 64 2 2 (N.of_nat 2)) ltac:(fun _ _ => idtac).
+    assert (Hst := store_pair b filled rest 2%nat 196 c z qs _ _
+                     Hb Hk H8 Hrb Hword0 Hdec0 Hword1 Hdec1).
+    replace ((196 + 4) + 4) with 204 in Hst by reflexivity.
+    eapply more; [exact Hst | apply canon_done |].
+    destruct (from_204 b (filled + 2)%nat (rest - 2) c z qs
+                Hb ltac:(lia) ltac:(lia)) as [k [s [Hk2 Hh]]].
+    replace ((filled + 2) + (rest - 2))%nat with (filled + rest)%nat in Hh by lia.
+    exists k, s. split; [exact Hk2 | exact Hh].
+  - land_if Htb.
+    eapply more; [exact Htb | apply canon_done |].
+    apply from_204; [exact Hb | apply Nat.leb_gt; exact Hge | exact Hlt].
+Qed.
+
+Lemma from_180 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 8)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 180 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hbit := bit2_lt8 rest Hr).
+  word_pair 180 (Tbz 2 2 3%Z) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add 180 3%Z = 192) by (vm_compute; reflexivity).
+  assert (Hnext : 180 + 4 = 184) by reflexivity.
+  assert (Htb := step1_tbz b filled rest 180 2 192 184 3%Z
+                   ((4 <=? rest)%nat) c z qs _
+                   Hword Hdec Hdest Hnext Hbit).
+  destruct (4 <=? rest)%nat eqn:Hge.
+  - land_if Htb.
+    eapply more; [exact Htb | apply canon_done |].
+    assert (Hk : (4 <= rest)%nat) by (apply Nat.leb_le; exact Hge).
+    assert (H8 : (4 <= 8)%nat) by lia.
+    word_pair 184 (StrPost 4%nat 3 0 (Z.of_nat 4)) ltac:(fun _ _ => idtac).
+    word_pair (184 + 4) (AddSub true false 64 2 2 (N.of_nat 4)) ltac:(fun _ _ => idtac).
+    assert (Hst := store_pair b filled rest 4%nat 184 c z qs _ _
+                     Hb Hk H8 Hrb Hword0 Hdec0 Hword1 Hdec1).
+    replace ((184 + 4) + 4) with 192 in Hst by reflexivity.
+    eapply more; [exact Hst | apply canon_done |].
+    destruct (from_192 b (filled + 4)%nat (rest - 4) c z qs
+                Hb ltac:(lia) ltac:(lia)) as [k [s [Hk2 Hh]]].
+    replace ((filled + 4) + (rest - 4))%nat with (filled + rest)%nat in Hh by lia.
+    exists k, s. split; [exact Hk2 | exact Hh].
+  - land_if Htb.
+    eapply more; [exact Htb | apply canon_done |].
+    apply from_192; [exact Hb | apply Nat.leb_gt; exact Hge | exact Hlt].
+Qed.
+
+Lemma from_168 : forall b filled rest c z qs,
+  b < 256 ->
+  (rest < 16)%nat ->
+  (filled + rest < 2 ^ 64)%nat ->
+  exists k (s : Mach),
+    steps k (canon b filled rest 168 c z qs) = Some s /\
+    halted b (filled + rest) s.
+Proof.
+  intros b filled rest c z qs Hb Hr Hlt.
+  assert (Hrb : (rest < 2 ^ 64)%nat) by (exact (rest_lt64 filled rest Hlt)).
+  assert (Hbit := bit3_lt16 rest Hr).
+  word_pair 168 (Tbz 2 3 3%Z) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add 168 3%Z = 180) by (vm_compute; reflexivity).
+  assert (Hnext : 168 + 4 = 172) by reflexivity.
+  assert (Htb := step1_tbz b filled rest 168 3 180 172 3%Z
+                   ((8 <=? rest)%nat) c z qs _
+                   Hword Hdec Hdest Hnext Hbit).
+  destruct (8 <=? rest)%nat eqn:Hge.
+  - land_if Htb.
+    eapply more; [exact Htb | apply canon_done |].
+    assert (Hk : (8 <= rest)%nat) by (apply Nat.leb_le; exact Hge).
+    assert (H8 : (8 <= 8)%nat) by lia.
+    word_pair 172 (StrPost 8%nat 3 0 (Z.of_nat 8)) ltac:(fun _ _ => idtac).
+    word_pair (172 + 4) (AddSub true false 64 2 2 (N.of_nat 8)) ltac:(fun _ _ => idtac).
+    assert (Hst := store_pair b filled rest 8%nat 172 c z qs _ _
+                     Hb Hk H8 Hrb Hword0 Hdec0 Hword1 Hdec1).
+    replace ((172 + 4) + 4) with 180 in Hst by reflexivity.
+    eapply more; [exact Hst | apply canon_done |].
+    destruct (from_180 b (filled + 8)%nat (rest - 8) c z qs
+                Hb ltac:(lia) ltac:(lia)) as [k [s [Hk2 Hh]]].
+    replace ((filled + 8) + (rest - 8))%nat with (filled + rest)%nat in Hh by lia.
+    exists k, s. split; [exact Hk2 | exact Hh].
+  - land_if Htb.
+    eapply more; [exact Htb | apply canon_done |].
+    apply from_180; [exact Hb | apply Nat.leb_gt; exact Hge | exact Hlt].
+Qed.
+
+(* The compare-with-16 branch that the prologue leaves pending. *)
+Lemma from_28 : forall b n c z qs,
+  b < 256 ->
+  (n < 2 ^ 64)%nat ->
+  c = (16 <=? n)%nat ->
+  exists k (s : Mach),
+    steps k (canon b 0%nat n 28 c z qs) = Some s /\
+    halted b n s.
+Proof.
+  intros b n c z qs Hb Hn Hc.
+  assert (Hlt : (0 + n < 2 ^ 64)%nat) by (rewrite Nat.add_0_l; exact Hn).
+  word_pair 28 (Bcond 35%Z 3) ltac:(fun _ _ => idtac).
+  assert (Hdest : pc_add 28 35%Z = 168) by (vm_compute; reflexivity).
+  assert (Hnext : 28 + 4 = 32) by reflexivity.
+  assert (Ht : take_cond c 3 = Some (negb c)) by reflexivity.
+  assert (Hbr : steps 1%nat (canon b 0%nat n 28 c z qs) =
+            Some (canon b 0%nat n (if negb c then 168 else 32) c z qs)).
+  { apply step_then with
+      (s' := canon b 0%nat n (if negb c then 168 else 32) c z qs).
+    - reflexivity.
+    - unfold canon. etransitivity.
+      + eapply step_bcond; [exact Hword | exact Hdec | exact Ht].
+      + unfold canon. rewrite Hdest.
+        destruct c; cbn [negb].
+        * rewrite <- Hnext. reflexivity.
+        * reflexivity.
+    - reflexivity. }
+  rewrite Hc in Hbr. rewrite Hc.
+  destruct ((16 <=? n)%nat) eqn:H16.
+  - land_if Hbr.
+    eapply more; [exact Hbr | apply canon_done |].
+    destruct (from_32 b 0%nat n true z qs Hb ltac:(apply Nat.leb_le; exact H16) Hlt)
+      as [k [s [Hk Hh]]].
+    rewrite Nat.add_0_l in Hh.
+    exists k, s. split; [exact Hk | exact Hh].
+  - land_if Hbr.
+    eapply more; [exact Hbr | apply canon_done |].
+    destruct (from_168 b 0%nat n false z qs Hb ltac:(apply Nat.leb_gt; exact H16) Hlt)
+      as [k [s [Hk Hh]]].
+    rewrite Nat.add_0_l in Hh.
+    exists k, s. split; [exact Hk | exact Hh].
+Qed.
+
+Theorem rt_memset_neon_any :
+  forall (n b : nat),
+    (b < 256)%nat ->
+    (n < 2 ^ 64)%nat ->
+    exists k (s : Mach),
+      steps k (init b n) = Some s /\
+      s.(done) = true /\
+      s.(r0) = 0 /\
+      s.(mem) = repeat (N.of_nat b) n.
+Proof.
+  intros n b Hb Hn.
+  assert (HbN : N.of_nat b < 256) by (apply of_nat_byte; exact Hb).
+  eapply more.
+  - apply (prologue b n Hb Hn).
+  - apply canon_done.
+  - destruct (from_28 (N.of_nat b) n ((16 <=? n)%nat) ((n =? 16)%nat) false
+               HbN Hn eq_refl) as [k [s [Hk Hh]]].
+    exists k, s. split; [exact Hk |].
+    destruct Hh as [Hd [Hr0 Hm]].
+    split; [exact Hd | split; [exact Hr0 | exact Hm]].
+Qed.
+
+Theorem rt_memset_neon_16 :
+  forall b : nat,
+    (b < 256)%nat ->
+    exists k (s : Mach),
+      steps k (init b 16) = Some s /\
+      s.(done) = true /\
+      s.(r0) = 0 /\
+      s.(mem) = repeat (N.of_nat b) 16.
+Proof.
+  intros b Hb.
+  apply rt_memset_neon_any; [exact Hb | apply imm_bound; lia].
+Qed.
