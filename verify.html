@@ -49,63 +49,79 @@
   <section class="band" id="orient">
     <div class="wrap">
       <div class="band-head">
-        <span class="band-index">00 / Orient</span>
-        <h2>Three papers, one shape</h2>
-        <p class="band-eyebrow">Coq for the proofs we will write · HOL4 named where it was HOL4</p>
+        <span class="band-index">00 / Papers</span>
+        <h2>Three machine models</h2>
+        <p class="band-eyebrow">A submodel of the CPU · a binary, then a theorem · a formula, then a search</p>
       </div>
       <div class="band-intro">
         <p>
-          The orienting system is Coq. The goal is a kernel a person can read, and a
-          check that stays fast. If a change makes <code>coqc</code> slow, the change
-          is too big.
+          The checker is Coq, standard library only. The object is one vector
+          kernel whose bytes are already frozen. A change that makes
+          <code>coqc</code> slow is too big for this kernel.
         </p>
         <p class="en">
-          Lean 4 is out of scope. CompCert, VST, Iris, and a full C parser are out of
-          scope for the same reason: they are larger than the library they would be
-          asked to justify.
+          Lean 4, CompCert, VST, Iris, and a C parser are larger than the
+          function they would be asked to justify. They stay outside this file.
         </p>
       </div>
       <div class="card-grid">
         <article class="card-item">
           <div class="card-kicker">PPDP 2013 · Coq</div>
-          <h3>CoqASM</h3>
+          <h3>CoqASM — a machine submodel</h3>
           <p>
             Andrew Kennedy, Nick Benton, Jonas B. Jensen, and Pierre-Évariste Dagand,
             “Coq: The World’s Best Macro Assembler?”, PPDP 2013.
-            A subset of x86 is modelled in Coq. Notations accept ordinary assembly.
-            The assembler produces hex bytes inside Coq, with a correctness theorem
-            from those bytes to a separation-logic formula.
+            The paper builds a submodel of a subset of x86: an instruction
+            interpreter, an encoder to concrete bytes, and a separation-logic
+            assertion above those bytes. Assembly notation elaborates inside
+            Coq. The theorem says the bytes establish the assertion.
+            That development is a general assembler. It is not an input to
+            <code>rt_memset_neon</code>. The shared technique is the submodel
+            itself: a step relation small enough that a person can read the
+            statement. Their type classes and SSReflect stay in their paper.
           </p>
         </article>
         <article class="card-item">
           <div class="card-kicker">TPHOLs 2009 · HOL4</div>
-          <h3>Verified Lisp, the shape</h3>
+          <h3>Verified LISP — binary, then theorem</h3>
           <p>
-            Magnus O. Myreen and Michael J. C. Gordon, “Verified LISP Implementations
-            on ARM, x86 and PowerPC”, TPHOLs 2009, LNCS 5674.
-            Machine-code interpreters for the core of Lisp 1.5, on top of a verified
-            allocator and collector. The proofs are in HOL4, not Coq. We take the
-            shape: a small program, proved down to the instruction, not the system.
+            Magnus O. Myreen and Michael J. C. Gordon, “Verified LISP
+            Implementations on ARM, x86 and PowerPC”, TPHOLs 2009, LNCS 5674.
+            The proofs are in HOL4.
+            Each instruction of a Lisp 1.5 interpreter, including its allocator,
+            is related to one step of a small operational semantics. The object
+            is a language runtime. The method is the one used here for a vector
+            kernel: take the binary that already exists, interpret its bytes,
+            and prove that the interpreter meets a functional specification.
+            <code>coq/MemsetNeon.v</code> is that method on 56 ARM64 words, in Coq.
           </p>
         </article>
         <article class="card-item">
           <div class="card-kicker">Proc. IEEE 2005 · CoqPL 2021</div>
-          <h3>SPIRAL, a subset</h3>
+          <h3>SPIRAL — formula, then search</h3>
           <p>
-            Markus Püschel and colleagues, “SPIRAL: Code Generation for DSP Transforms”,
-            Proceedings of the IEEE, 2005. Algorithms are sparse factorizations in SPL,
-            rewritten, then emitted as code.
-            Patrick Brinich and Jeremy Johnson, CoqPL 2021, verified a subset of that
-            pipeline in Coq. We take one rewrite: aligned head, a vector body, a tail.
+            Markus Püschel and colleagues, “SPIRAL: Code Generation for DSP
+            Transforms”, Proceedings of the IEEE, 2005. Patrick Brinich and
+            Jeremy Johnson, CoqPL 2021.
+            SPIRAL’s semantic model is a formula in SPL, a sparse factorization
+            of a linear transform over a vector tract. A search rewrites the
+            formula. The factorization that wins the cost model is emitted as
+            a vector kernel. The binary is the output of the search.
+            Brinich and Johnson verified a slice of that pipeline in Coq:
+            formula, rewrite, generated code.
+            This library runs the pipeline in the other direction. The kernel
+            is written, measured against the shipped C library, and frozen.
+            Coq then models those frozen bytes. The prover does not search
+            for the kernel.
           </p>
         </article>
       </div>
       <p class="caveat">
-        CoqASM uses type classes and maps concrete bytes into the SSReflect library.
-        This plan does not. No type classes, no MathComp, no SSReflect. The part we
-        keep is the one that fits a small kernel: bytes computed inside Coq, a short
-        statement that those bytes implement the spec, and notations only where they
-        stay readable.
+        CoqASM contributes the machine submodel. Verified LISP contributes the
+        order: binary first, theorem second. SPIRAL contributes the picture of
+        a vector body as a repeated width plus a tail, and it contributes that
+        picture as a search. The memset proof uses the picture as the control
+        flow already present in <code>src/aarch64/neon/mem.S</code>.
       </p>
     </div>
   </section>
@@ -121,12 +137,12 @@
         <ul class="spec">
           <li><strong>Kernel</strong><span>Functional specs of <code>memcpy</code>, <code>memmove</code>, <code>memset</code>, and <code>memcmp</code>. No extractor standing in for a proof. No C parser.</span></li>
           <li><strong>Check</strong><span>The memset proof inducts on the 64-byte loop and the 16-byte loop. Finite <code>vm_compute</code> covers the 256 fill bytes, the bit tests under 16, and the decoded words.</span></li>
-          <li><strong>Stop rule</strong><span>If <code>coqc</code> gets slow, delete the abstraction that caused it. Do not add a CI job that hides the cost.</span></li>
+          <li><strong>Stop rule</strong><span>If <code>coqc</code> gets slow, delete the abstraction that caused it. The GitHub job <code>verify</code> runs the same <code>make verify</code> in the open.</span></li>
           <li><strong>Checked</strong><span><code>coq/MemsetNeon.v</code> is the bytes of <code>rt_memset_neon</code>. Every fill byte from 0 to 255, every length below 2<sup>64</sup>. The routine writes that many copies of the byte and returns the original pointer. In this model the buffer starts at address 0, so the returned <code>x0</code> is 0. <code>make verify</code> is <code>coqc</code> on that file.</span></li>
         </ul>
         <figcaption>
           <span><b>Status</b> — every n below 2<sup>64</sup> checked</span>
-          <span>memcpy, memcmp, and phases 1–5 are still open</span>
+          <span>memcpy and memcmp are still open</span>
         </figcaption>
       </figure>
     </div>
@@ -135,27 +151,26 @@
   <section class="band" id="phases">
     <div class="wrap">
       <div class="band-head">
-        <span class="band-index">02 / Phases</span>
+        <span class="band-index">02 / Order</span>
         <h2>Order of work</h2>
-        <p class="band-eyebrow">Memory before strings · i386 REP before AVX-512</p>
+        <p class="band-eyebrow">SIMD · C99 contract · security · Coq model · tune</p>
       </div>
       <div class="band-intro">
         <p>
-          Each phase is one claim a reader can hold in their head. A later phase
-          does not start by widening the logic. It starts by naming the next
-          instruction sequence.
+          A kernel is born as instructions. The proof is a model of the binary
+          that survived measurement and the static scan. A later step reads the
+          artifact the earlier step froze.
         </p>
         <p class="en">
-          The first machine-code target is the i386 string move and store in
-          <code>src/i386/rep/mem.s</code> (<code>rep movsb</code>, <code>rep stosb</code>).
-          That file is smaller than a NEON or AVX-512 body, and the bytes are obvious.
+          Strings that walk to NUL, <code>stdio</code>, <code>qsort</code>, and
+          the allocator stay on the host oracle. They are outside the vector-kernel model.
         </p>
       </div>
       <figure class="plate">
         <table class="cmp">
           <thead>
             <tr>
-              <th>Phase</th>
+              <th>Step</th>
               <th>Artifact</th>
               <th>Claim</th>
               <th>State</th>
@@ -163,62 +178,288 @@
           </thead>
           <tbody>
             <tr>
-              <td data-label="Phase">0</td>
-              <td data-label="Artifact">Host oracle, <code>make security</code></td>
-              <td data-label="Claim">Behaviour against the shipped C library, and a clean static scan of the C.</td>
+              <td data-label="Step">1</td>
+              <td data-label="Artifact">SIMD kernel</td>
+              <td data-label="Claim">Write the vector body and make it faster than the competitor. On this machine the competitor is the shipped C library. A published win has unrounded coefficient at least 1.05. Neon <code>memset</code> is parity.</td>
+              <td data-label="State"><span class="badge badge-teal">Measured</span></td>
+            </tr>
+            <tr>
+              <td data-label="Step">2</td>
+              <td data-label="Artifact">C99 contract</td>
+              <td data-label="Claim"><code>verify/test_host.c</code> is the contract. The same lengths, the same bytes, checked against libc. The assembly is accepted when the contract passes.</td>
               <td data-label="State"><span class="badge badge-teal">Running</span></td>
             </tr>
             <tr>
-              <td data-label="Phase">1</td>
-              <td data-label="Artifact"><code>coq/MemSpec.v</code></td>
-              <td data-label="Claim">Four memory operations as functions on lists of bytes. Overlap for <code>memmove</code> is part of the spec.</td>
-              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+              <td data-label="Step">3</td>
+              <td data-label="Artifact">Security</td>
+              <td data-label="Claim"><code>make security</code>: clang <code>--analyze</code>, flawfinder level 4 and above, cppcheck warning and portability. A finding fails the process. The scan reads the C. It does not read the vector body.</td>
+              <td data-label="State"><span class="badge badge-teal">Running</span></td>
             </tr>
             <tr>
-              <td data-label="Phase">2</td>
-              <td data-label="Artifact"><code>src/i386/rep/mem.s</code></td>
-              <td data-label="Claim">The assembled bytes of <code>rep movsb</code> and <code>rep stosb</code> meet MemSpec on the lengths above.</td>
-              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+              <td data-label="Step">4</td>
+              <td data-label="Artifact">Coq model of the binary</td>
+              <td data-label="Claim">One function, one vector kernel. <code>coq/MemsetNeon.v</code> is the model of the frozen bytes of <code>rt_memset_neon</code>. <code>memcpy</code> and <code>memcmp</code> are the next binaries.</td>
+              <td data-label="State"><span class="badge badge-teal">memset</span></td>
             </tr>
             <tr>
-              <td data-label="Phase">3</td>
-              <td data-label="Artifact">Scalar word loops</td>
-              <td data-label="Claim">The word-wise loops as Coq functions, proved equal to MemSpec. The C source is not parsed.</td>
-              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
-            </tr>
-            <tr>
-              <td data-label="Phase">4</td>
-              <td data-label="Artifact">One vector body</td>
-              <td data-label="Claim">SSE2 or NEON, and only the opcodes that file already uses.</td>
-              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
-            </tr>
-            <tr>
-              <td data-label="Phase">5</td>
-              <td data-label="Artifact">One SPL-style split</td>
-              <td data-label="Claim">Head to alignment, then <em>k</em> vector widths, then a tail. The three pieces compose to MemSpec.</td>
-              <td data-label="State"><span class="badge badge-gold">Not written</span></td>
+              <td data-label="Step">5</td>
+              <td data-label="Artifact">Tune</td>
+              <td data-label="Claim">Keep the measured speed and shorten the proof. A slower proof that hides the binary is a failed edit. A faster kernel that breaks the theorem is a failed edit.</td>
+              <td data-label="State"><span class="badge badge-gold">Open</span></td>
             </tr>
           </tbody>
         </table>
         <figcaption>
-          <span><b>Sequence</b> — memory kernels only</span>
-          <span>Strings that walk to NUL come after phase 5</span>
+          <span><b>Sequence</b> — the binary is frozen before the model</span>
+          <span>Step 4 is one function</span>
         </figcaption>
       </figure>
       <p class="caveat">
-        <code>stdio</code>, <code>qsort</code>, <code>qsort_neo</code>, and the allocator
-        stay on the host oracle. They are not in the first Coq files.
-        Lifting an existing binary with a decompiler, the way later tools do for a
-        routine such as glibc <code>strlen</code>, is a check that can follow this
-        kernel. It is not a substitute for it.
+        A decompiler lift of an existing routine, such as glibc <code>strlen</code>,
+        can follow this kernel. The kernel is the bytes we ship.
       </p>
+    </div>
+  </section>
+
+  <section class="band" id="memset">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">03 / Memset</span>
+        <h2>The checked argument</h2>
+        <p class="band-eyebrow">rt_memset_neon · 56 words · every n below 2<sup>64</sup></p>
+      </div>
+      <div class="band-intro">
+        <p>
+          <code>init b n</code> places the buffer at address 0, the fill byte in
+          <code>x1</code>, the length in <code>x2</code>, and <code>n</code> zero
+          bytes in memory. <code>halted</code> is three facts: <code>ret</code>
+          has run, <code>x0</code> is 0, and memory is <code>n</code> copies of
+          the byte. The 0 in <code>x0</code> is the saved base. The prologue
+          copies the incoming pointer into <code>x8</code>, and the epilogue
+          is <code>mov x0, x8; ret</code>.
+        </p>
+        <p class="en">
+          Fuel is <code>exists k</code>. The vector-store flag is outside the
+          statement. So is any byte past <code>n</code>.
+        </p>
+      </div>
+
+      <div class="table-lead">
+        <div class="table-lead-kicker">1 · Statement</div>
+        <h3 class="table-lead-title">Main theorem</h3>
+        <p>
+          One statement covers every fill byte and every length that fits in
+          <code>x2</code>. The corollary at <code>n = 16</code> is the old
+          statement, closed by <code>imm_bound</code>. A bare call to
+          <code>lia</code> does not invent a witness for a concrete power of two.
+        </p>
+      </div>
+      <figure class="plate">
+        <pre class="cmd">Theorem rt_memset_neon_any :
+  forall (n b : nat),
+    (b &lt; 256)%nat -&gt;
+    (n &lt; 2 ^ 64)%nat -&gt;
+    exists k (s : Mach),
+      steps k (init b n) = Some s /\
+      s.(done) = true /\
+      s.(r0) = 0 /\
+      s.(mem) = repeat (N.of_nat b) n.
+
+Theorem rt_memset_neon_16 :
+  forall b : nat, (b &lt; 256)%nat -&gt;
+    exists k (s : Mach),
+      steps k (init b 16) = Some s /\
+      s.(done) = true /\ s.(r0) = 0 /\
+      s.(mem) = repeat (N.of_nat b) 16.
+<span class="dim">(* apply rt_memset_neon_any; imm_bound discharges (16 &lt; 2^64) *)</span></pre>
+        <figcaption>
+          <span><b>File</b> — coq/MemsetNeon.v</span>
+          <span>Stdlib · no Admitted</span>
+        </figcaption>
+      </figure>
+
+      <div class="table-lead">
+        <div class="table-lead-kicker">2 · Spine</div>
+        <h3 class="table-lead-title">Main lemmas</h3>
+        <p>
+          The file has a lemma per instruction form and a lemma per label in
+          the assembly. The argument a reader has to hold is the spine below.
+          <code>canon</code> is the invariant between labels: <code>x0</code> is
+          how many bytes are filled, <code>x2</code> is how many remain, the
+          vector register is the splat of the byte, and memory is the filled
+          prefix followed by a zero suffix.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Lemma</th>
+              <th>At</th>
+              <th>What it establishes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="grp"><td colspan="3">Open and close</td></tr>
+            <tr>
+              <td data-label="Lemma"><code>prologue</code></td>
+              <td data-label="At">pc 0 → 28</td>
+              <td data-label="What">Seven instructions. Save <code>x0</code> in <code>x8</code>, build the byte splat, <code>dup.2d</code>, <code>cmp x2, #16</code>. Lands in <code>canon</code> with nothing filled.</td>
+            </tr>
+            <tr>
+              <td data-label="Lemma"><code>epilogue</code>, <code>finish0</code></td>
+              <td data-label="At">pc 160</td>
+              <td data-label="What"><code>mov x0, x8; ret</code>. <code>done</code> becomes true. <code>x0</code> is the saved base.</td>
+            </tr>
+            <tr>
+              <td data-label="Lemma"><code>more</code>, <code>steps_seq</code></td>
+              <td data-label="At">—</td>
+              <td data-label="What">Glue. A finished prefix plus a proof from the resulting state gives a proof from the start. Extra fuel after <code>ret</code> stays on the halted machine.</td>
+            </tr>
+            <tr class="grp"><td colspan="3">The branch the prologue leaves</td></tr>
+            <tr>
+              <td data-label="Lemma"><code>from_28</code></td>
+              <td data-label="At">pc 28</td>
+              <td data-label="What"><code>b.lo</code>. <code>n &lt; 16</code> goes to the short path at pc 168. Otherwise pc 32.</td>
+            </tr>
+            <tr>
+              <td data-label="Lemma"><code>from_32</code>, <code>two_nops</code>, <code>from_48</code></td>
+              <td data-label="At">pc 32, 48</td>
+              <td data-label="What"><code>cmp #64</code>. Below 64, and at least 16, enters the 16-byte loop. At least 64 steps over the two alignment nops into <code>run64</code>.</td>
+            </tr>
+            <tr class="grp"><td colspan="3">Loops</td></tr>
+            <tr>
+              <td data-label="Lemma"><code>body64</code>, <code>run64</code></td>
+              <td data-label="At">pc 48</td>
+              <td data-label="What">One iteration is six instructions and 64 bytes: two <code>stp q</code> of 32, <code>add x0, #64</code>, <code>sub x2, #64</code>, <code>cmp #64</code>, <code>b.hs</code> back. <code>run64</code> inducts on the quotient. <code>from_72</code> then takes a zero remainder to the epilogue, or a remainder below 16 to the tail, or a remainder of at least 16 into <code>run16</code>.</td>
+            </tr>
+            <tr>
+              <td data-label="Lemma"><code>body16</code>, <code>run16</code></td>
+              <td data-label="At">pc 84</td>
+              <td data-label="What">One iteration is four instructions and 16 bytes: <code>str q</code> with post-index 16, <code>sub #16</code>, <code>cmp #16</code>, <code>b.hs</code> back. The exit remainder is below 16.</td>
+            </tr>
+            <tr class="grp"><td colspan="3">Remainder under 16</td></tr>
+            <tr>
+              <td data-label="Lemma"><code>from_104</code> … <code>from_152</code></td>
+              <td data-label="At">pc 104</td>
+              <td data-label="What">Long-path tail. <code>cmp</code> / <code>b.lo</code> for 8, then 4, then 2, then <code>cbz</code> and at most one <code>strb</code>.</td>
+            </tr>
+            <tr>
+              <td data-label="Lemma"><code>from_168</code> … <code>from_204</code></td>
+              <td data-label="At">pc 168</td>
+              <td data-label="What">Short path. <code>tbz</code> on bits 3, 2, 1, 0 of the length. A clear bit skips the store. <code>n = 0</code> stores nothing.</td>
+            </tr>
+            <tr class="grp"><td colspan="3">Finite tables and the word-size wall</td></tr>
+            <tr>
+              <td data-label="Lemma"><code>chain_byte</code></td>
+              <td data-label="At">256 rows</td>
+              <td data-label="What">For each byte <code>b &lt; 256</code>, the <code>and</code> / <code>orr</code> chain equals the splat <code>b * 0x0101010101010101</code>.</td>
+            </tr>
+            <tr>
+              <td data-label="Lemma"><code>bits_lt16</code></td>
+              <td data-label="At">16 rows</td>
+              <td data-label="What">For each <code>n &lt; 16</code>, bit 3 is set exactly when <code>n ≥ 8</code>, and bits 2, 1, 0 match the later tests.</td>
+            </tr>
+            <tr>
+              <td data-label="Lemma"><code>imm_bound</code>, <code>rest_lt64</code></td>
+              <td data-label="At">—</td>
+              <td data-label="What">Adds and subs are proved while the pointer and the remaining length stay below 2<sup>64</sup>. Immediates 16 and 64 go through <code>imm_bound</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Spine</b> — labels of src/aarch64/neon/mem.S</span>
+          <span>Decode of the 56 words is a separate finite check</span>
+        </figcaption>
+      </figure>
+
+      <div class="table-lead">
+        <div class="table-lead-kicker">3 · Descent</div>
+        <h3 class="table-lead-title">By bitness</h3>
+        <p>
+          The length is one machine word. The proof follows the widths the
+          binary already peels. At width <em>w</em>, <code>Nat.div_mod</code>
+          writes the remainder as <em>w·q + r</em> with <em>r &lt; w</em>.
+          The loop lemma inducts on <em>q</em>. The base case is one body.
+          The step is one body, then the induction hypothesis, after the sum
+          <code>(filled + w) + w·q</code> is lined up with
+          <code>filled + w·(q+1)</code>.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Width</th>
+              <th>Mechanism</th>
+              <th>Exit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Width">64</td>
+              <td data-label="Mechanism"><code>run64</code>. Six instructions. The two <code>stp q</code> inside the body write 32 bytes each. 32 is a pair, and it has no induction of its own.</td>
+              <td data-label="Exit"><code>rest &lt; 64</code>, at pc 72</td>
+            </tr>
+            <tr>
+              <td data-label="Width">16</td>
+              <td data-label="Mechanism"><code>run16</code>. Four instructions. This is also the entry when the original length was already below 64 and at least 16.</td>
+              <td data-label="Exit"><code>rest &lt; 16</code>, at pc 100</td>
+            </tr>
+            <tr>
+              <td data-label="Width">8, 4, 2</td>
+              <td data-label="Mechanism">One store or a skip. The long path uses <code>cmp</code> / <code>b.lo</code>. The short path uses <code>tbz</code>, taken when the bit is clear. After a taken store of 8, bit 2 of the new remainder decides 4, and the same for 2.</td>
+              <td data-label="Exit"><code>rest &lt; 2</code></td>
+            </tr>
+            <tr>
+              <td data-label="Width">1</td>
+              <td data-label="Mechanism"><code>strb</code>. No writeback and no subtract. Bit 0 of a remainder below 2 is set exactly when the remainder is 1.</td>
+              <td data-label="Exit">one byte, or none</td>
+            </tr>
+            <tr>
+              <td data-label="Width">0</td>
+              <td data-label="Mechanism"><code>cbz</code>, or every <code>tbz</code> taken. No store.</td>
+              <td data-label="Exit">epilogue</td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Descent</b> — induction on the quotient, then four bits</span>
+          <span>vm_compute is the 256-row splat, the 16-row bit table, and the decoded words</span>
+        </figcaption>
+      </figure>
+
+      <div class="table-lead gold">
+        <div class="table-lead-kicker">4 · Reduction</div>
+        <h3 class="table-lead-title">What survives on AArch32</h3>
+        <p>
+          The NEON <code>q</code> register is 128 bits on AArch32 and on AArch64,
+          so a 16-byte store is still one instruction. The 16-row bit table
+          talks about a remainder, and it does not mention the address width.
+          This tree has no AArch32 memset. The reduction is the cut between
+          lemmas that mention encodings and lemmas that mention only
+          <code>canon</code>.
+        </p>
+      </div>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>Keep</strong><span><code>run64</code> and <code>run16</code>, once a new body lemma has the same statement: <code>canon</code> in, <code>canon</code> out, remainder strictly smaller. The epilogue shape survives: save the base, return it. The bit table survives if a remainder under 16 is still tested one bit at a time.</span></li>
+          <li><strong>Re-prove</strong><span>The word size. The statement becomes <code>n &lt; 2<sup>32</sup></code>, because the pointer and the length live in 32-bit registers. <code>add</code> and <code>sub</code> of those registers, and <code>imm_bound</code>, are closed again at 32. They are not copied from the 64-bit lemmas.</span></li>
+          <li><strong>Rewrite</strong><span>The decoder and the body lemmas. The 56 words in this file are A64. AArch32 <code>vstr</code> / <code>vst1</code> are different encodings, and the register fields are 32 bits wide. <code>body64</code> and <code>body16</code> mention those words, so they are new lemmas. If the AArch32 schedule peels the same widths, the <code>from_*</code> lemmas keep their shape and change their program counters. If it peels different widths, the quotients change with the schedule.</span></li>
+          <li><strong>Open</strong><span>No AArch32 theorem is claimed. The checked statement is the AArch64 binary.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>Cut</b> — encodings in the body, quotients in the induction</span>
+          <span>AArch32 memset is not in this tree</span>
+        </figcaption>
+      </figure>
     </div>
   </section>
 
   <section class="band" id="today">
     <div class="wrap">
       <div class="band-head">
-        <span class="band-index">03 / Today</span>
+        <span class="band-index">04 / Today</span>
         <h2>What already runs</h2>
         <p class="band-eyebrow">Oracle for behaviour · SQCSA for the C · coqc on Rocq 9.2</p>
       </div>
@@ -229,8 +470,8 @@
           <li><strong>Coq</strong><span><code>make verify</code> checks <code>coq/MemsetNeon.v</code>: <code>rt_memset_neon</code> for every length below 2<sup>64</sup>. The GitHub job <code>verify</code> runs that command on Rocq 9.2. Ubuntu 24.04 apt package <code>coq</code> is 8.18 and does not provide <code>From Stdlib</code>.</span></li>
         </ul>
         <figcaption>
-          <span><b>Boundary</b> — a page is not a proof</span>
-          <span>verify.html</span>
+          <span><b>Reading</b> — the check is make verify</span>
+          <span>coq/MemsetNeon.v</span>
         </figcaption>
       </figure>
     </div>
@@ -259,17 +500,17 @@
       </ul>
     </div>
     <div>
-      <h4>First target</h4>
+      <h4>Checked kernel</h4>
       <ul>
-        <li>src/i386/rep/mem.s</li>
-        <li>rep movsb / rep stosb</li>
-        <li>MemSpec, when it exists</li>
+        <li>src/aarch64/neon/mem.S</li>
+        <li>rt_memset_neon</li>
+        <li>coq/MemsetNeon.v · n &lt; 2^64</li>
       </ul>
     </div>
   </div>
   <div class="footer-legal">
     <p class="hold">© 2026 Cryptographic Telesystems, LLC. Ukraine. All rights reserved.</p>
-    <p>btron.pro · B-System C Run-Time · This page is the plan. It is not a checked proof.</p>
+    <p>btron.pro · B-System C Run-Time · The memset section is a checked proof. memcpy, memcmp, and AArch32 are still open.</p>
   </div>
 </footer>
 
