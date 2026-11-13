@@ -58,7 +58,11 @@ static const char *grp_color[GRP_COUNT] = {
     C_CYAN, C_GREEN, C_YELLOW, C_MAGENTA, C_BLUE, C_RED
 };
 
-static unsigned char g_a[BUF], g_b[BUF], g_c[BUF];
+/* 64-byte alignment: PAD is 64, so the timed g_*+PAD pointers stay on a cache line.
+   The neon kernels issue ldp/stp of Q registers and do not peel to 16 bytes. */
+static unsigned char g_a[BUF] __attribute__((aligned(64)));
+static unsigned char g_b[BUF] __attribute__((aligned(64)));
+static unsigned char g_c[BUF] __attribute__((aligned(64)));
 static uint32_t g_rng = 0xA5A5F00Du;
 static int g_color = 1;
 
@@ -675,7 +679,7 @@ typedef char *(*strchr_fn)(const char *, int);
 static void bench_strlen_fn(struct row *r, strlen_fn fn)
 {
     enum { LOOPS = ITER_STR };
-    static char s[1025];
+    static char s[1025] __attribute__((aligned(64)));
     size_t i, k;
     uint64_t t0, t1;
     volatile size_t sink = 0;
@@ -735,7 +739,8 @@ static void bench_strlen_fn(struct row *r, strlen_fn fn)
 static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
 {
     enum { LOOPS = ITER_STR };
-    static char a[256], b[256];
+    static char a[256] __attribute__((aligned(64)));
+    static char b[256] __attribute__((aligned(64)));
     size_t i, k;
     uint64_t t0, t1;
     volatile int sink = 0;
@@ -816,7 +821,7 @@ static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
 static void bench_strchr_fn(struct row *r, strchr_fn fn)
 {
     enum { LOOPS = ITER_STR };
-    static char s[512];
+    static char s[512] __attribute__((aligned(64)));
     size_t i, k;
     uint64_t t0, t1;
     volatile uintptr_t sink = 0;
@@ -881,7 +886,9 @@ static void bench_strchr_fn(struct row *r, strchr_fn fn)
 static void bench_strcpy(struct row *r)
 {
     enum { LOOPS = ITER_STR, N = 512 };
-    static char src[N], da[N], db[N];
+    static char src[N] __attribute__((aligned(64)));
+    static char da[N] __attribute__((aligned(64)));
+    static char db[N] __attribute__((aligned(64)));
     size_t i, k, ncopy;
     uint64_t t0, t1;
 
@@ -955,8 +962,8 @@ static void bench_strcpy(struct row *r)
 static void bench_strstr(struct row *r)
 {
     enum { LOOPS = ITER_STR };
-    static char hay[1024];
-    const char *nd = "needle";
+    static char hay[1024] __attribute__((aligned(64)));
+    static char nd[16] __attribute__((aligned(64))) = "needle";
     size_t i, k;
     uint64_t t0, t1;
     volatile uintptr_t sink = 0;
@@ -1241,12 +1248,13 @@ static void run_numeric(void)
         };
         for (i = 0; i < sizeof s / sizeof s[0]; i++)
             row_add(r, rt_atoi(s[i]) == atoi(s[i]));
+        static char digits[] __attribute__((aligned(64))) = "123456";
         t0 = now_ns();
-        for (k = 0; k < ITER_STR; k++) sink += atoi("123456");
+        for (k = 0; k < ITER_STR; k++) sink += atoi(digits);
         t1 = now_ns();
         if (r) r->libc_ns = t1 - t0;
         t0 = now_ns();
-        for (k = 0; k < ITER_STR; k++) sink += rt_atoi("123456");
+        for (k = 0; k < ITER_STR; k++) sink += rt_atoi(digits);
         t1 = now_ns();
         if (r) r->rt_ns = t1 - t0;
     }
@@ -1267,12 +1275,13 @@ static void run_numeric(void)
         row_add(r, ul_ok("0x", 16));
         row_add(r, ul_ok("0xG", 16));
         row_add(r, ul_ok("18446744073709551616", 10));
+        static char digits[] __attribute__((aligned(64))) = "12345678";
         t0 = now_ns();
-        for (k = 0; k < ITER_STR; k++) sink += (long)strtoul("12345678", 0, 10);
+        for (k = 0; k < ITER_STR; k++) sink += (long)strtoul(digits, 0, 10);
         t1 = now_ns();
         if (r) r->libc_ns = t1 - t0;
         t0 = now_ns();
-        for (k = 0; k < ITER_STR; k++) sink += (long)rt_strtoul("12345678", 0, 10);
+        for (k = 0; k < ITER_STR; k++) sink += (long)rt_strtoul(digits, 0, 10);
         t1 = now_ns();
         if (r) r->rt_ns = t1 - t0;
     }
@@ -1285,12 +1294,13 @@ static void run_numeric(void)
         row_add(r, ull_ok("-1", 10));
         row_add(r, ull_ok("18446744073709551616", 10));
         row_add(r, ull_ok("18446744073709551615", 10));
+        static char digits[] __attribute__((aligned(64))) = "0x123456789";
         t0 = now_ns();
-        for (k = 0; k < ITER_STR; k++) sink += (long)strtoull("0x123456789", 0, 0);
+        for (k = 0; k < ITER_STR; k++) sink += (long)strtoull(digits, 0, 0);
         t1 = now_ns();
         if (r) r->libc_ns = t1 - t0;
         t0 = now_ns();
-        for (k = 0; k < ITER_STR; k++) sink += (long)rt_strtoull("0x123456789", 0, 0);
+        for (k = 0; k < ITER_STR; k++) sink += (long)rt_strtoull(digits, 0, 0);
         t1 = now_ns();
         if (r) r->rt_ns = t1 - t0;
     }
@@ -1300,9 +1310,9 @@ static void run_numeric(void)
 static void run_sort(void)
 {
     struct row *r;
-    int a[1024] = {0};
-    int b[1024] = {0};
-    int c[1024] = {0};
+    int a[1024] __attribute__((aligned(64))) = {0};
+    int b[1024] __attribute__((aligned(64))) = {0};
+    int c[1024] __attribute__((aligned(64))) = {0};
     size_t n, k;
     uint64_t t0, t1;
     int si;
@@ -1369,7 +1379,9 @@ static void run_sort(void)
 static void run_format(void)
 {
     struct row *r;
-    char a[128], b[128];
+    char a[128] __attribute__((aligned(64)));
+    char b[128] __attribute__((aligned(64)));
+    static char item[] __attribute__((aligned(64))) = "item";
     int ra, rb;
     size_t k;
     uint64_t t0, t1;
@@ -1413,13 +1425,13 @@ static void run_format(void)
 
     t0 = now_ns();
     for (k = 0; k < ITER_FMT; k++)
-        snprintf(b, sizeof b, "%d-%s-%x", (int)k, "item", (unsigned)k);
+        snprintf(b, sizeof b, "%d-%s-%x", (int)k, item, (unsigned)k);
     t1 = now_ns();
     if (r) r->libc_ns = t1 - t0;
 
     t0 = now_ns();
     for (k = 0; k < ITER_FMT; k++)
-        rt_snprintf(a, sizeof a, "%d-%s-%x", (int)k, "item", (unsigned)k);
+        rt_snprintf(a, sizeof a, "%d-%s-%x", (int)k, item, (unsigned)k);
     t1 = now_ns();
     if (r) r->rt_ns = t1 - t0;
 
@@ -1464,7 +1476,7 @@ static void run_format(void)
 static void run_alloc(void)
 {
     struct row *r = row_begin("alloc", "scalar", GRP_ALLOC);
-    static unsigned char pool[8192];
+    static unsigned char pool[8192] __attribute__((aligned(64)));
     void *p1, *p2, *p3;
     size_t k;
     uint64_t t0, t1;

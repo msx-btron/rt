@@ -9,7 +9,7 @@
 #define SYM(name) name
 #endif
 
-/* ---- memcpy: 0-15 byte scalar, 16-63 q-path, 64+ 64-byte unroll ---- */
+/* ---- memcpy: 0-15 scalar, 16-63 q-path, 64-127 one 64-byte step, 128+ eight Q ---- */
 .globl SYM(rt_memcpy_neon)
 #ifndef __APPLE__
 .type SYM(rt_memcpy_neon), %function
@@ -21,10 +21,31 @@ SYM(rt_memcpy_neon):
     b.lo .Lmc_small
     cmp x2, #64
     b.lo .Lmc_mid
+    cmp x2, #128
+    b.lo .Lmc_64
 
-    /* large: 64-byte body */
+    /* 128-byte body. Four loads then four stores, one cache line on this core. */
+.p2align 4
+.Lmc_128:
+    ldp q0, q1, [x1]
+    ldp q2, q3, [x1, #32]
+    ldp q4, q5, [x1, #64]
+    ldp q6, q7, [x1, #96]
+    add x1, x1, #128
+    stp q0, q1, [x0]
+    stp q2, q3, [x0, #32]
+    stp q4, q5, [x0, #64]
+    stp q6, q7, [x0, #96]
+    add x0, x0, #128
+    sub x2, x2, #128
+    cmp x2, #128
+    b.hs .Lmc_128
+
+    /* 64-byte body, also the entry for 64..127. */
 .p2align 4
 .Lmc_64:
+    cmp x2, #64
+    b.lo .Lmc_lt64
     ldp q0, q1, [x1]
     ldp q2, q3, [x1, #32]
     add x1, x1, #64
@@ -34,6 +55,7 @@ SYM(rt_memcpy_neon):
     sub x2, x2, #64
     cmp x2, #64
     b.hs .Lmc_64
+.Lmc_lt64:
     cbz x2, .Lmc_ret
     cmp x2, #16
     b.lo .Lmc_small_ptr

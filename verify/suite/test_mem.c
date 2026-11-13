@@ -17,11 +17,11 @@
 
 enum { PAD = 64, BUF = 8192 };
 
-static unsigned char g_src[BUF];
-static unsigned char g_dst[BUF];
-static unsigned char g_orc[BUF];
-static unsigned char g_a[BUF];
-static unsigned char g_b[BUF];
+static unsigned char g_src[BUF] __attribute__((aligned(64)));
+static unsigned char g_dst[BUF] __attribute__((aligned(64)));
+static unsigned char g_orc[BUF] __attribute__((aligned(64)));
+static unsigned char g_a[BUF] __attribute__((aligned(64)));
+static unsigned char g_b[BUF] __attribute__((aligned(64)));
 
 static int g_fail;
 static unsigned g_checks;
