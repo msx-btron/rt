@@ -27,7 +27,6 @@ size_t      rt_strscat(char *dst, const char *src, size_t n);
 
 void        rt_strpad(char *dst, const char *src, size_t width, int fill);
 
-/* AArch64 NEON accelerators (same semantics as scalar). */
 size_t      rt_strlen_neon(const char *s);
 int         rt_strcmp_neon(const char *a, const char *b);
 char       *rt_strchr_neon(const char *s, int c);

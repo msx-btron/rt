@@ -221,10 +221,290 @@
     </div>
   </section>
 
+  <section class="band" id="contract">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">03 / Contract</span>
+        <h2>Contract methodology</h2>
+        <p class="band-eyebrow">One function · three obligations · every length</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          The contract is what a caller can observe. Return value, the bytes
+          the call must change, and the bytes it must leave alone. The labels
+          in the assembly are a schedule for discharging that statement.
+          Induction may follow the schedule. The statement does not name it.
+        </p>
+        <p class="en">
+          <code>rt_memset_neon</code> has one contract for every fill byte and
+          every length below 2<sup>64</sup>. The empty call, the bit tests
+          under 16, the 16-byte loop, and the 64-byte loop are exits inside
+          that statement. The proof inducts through them under
+          <code>rt_memset_neon_any</code>.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Obligation</th>
+              <th>memset</th>
+              <th>memcpy</th>
+              <th>memcmp</th>
+              <th>strcmp</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Obligation">Return</td>
+              <td data-label="memset">The pointer that was passed.</td>
+              <td data-label="memcpy">The destination pointer.</td>
+              <td data-label="memcmp">The sign of the first unsigned-byte difference. The magnitude is free.</td>
+              <td data-label="strcmp">The sign of the first unsigned-byte difference, stopping at the first NUL.</td>
+            </tr>
+            <tr>
+              <td data-label="Obligation">Written</td>
+              <td data-label="memset"><code>n</code> copies of <code>c</code> truncated to a byte. <code>n = 0</code> writes nothing.</td>
+              <td data-label="memcpy"><code>n</code> bytes from the source. The source bytes stay.</td>
+              <td data-label="memcmp">Nothing.</td>
+              <td data-label="strcmp">Nothing. The result does not depend on bytes after the first NUL.</td>
+            </tr>
+            <tr>
+              <td data-label="Obligation">Untouched</td>
+              <td data-label="memset">Every byte outside <code>[d, d+n)</code>. That is the host canary.</td>
+              <td data-label="memcpy">Every byte of the destination outside the written range, and the source canary.</td>
+              <td data-label="memcmp">Both buffers, including bytes inside the compared range.</td>
+              <td data-label="strcmp">Both strings.</td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Caller</b> — the same three lines on every kernel</span>
+          <span>memmove adds both overlap directions to the memcpy lines</span>
+        </figcaption>
+      </figure>
+      <figure class="plate">
+        <ul class="spec">
+          <li><strong>Quantify</strong><span>The inputs the binary branches on belong inside the statement. For <code>memset</code> that is every byte <code>b &lt; 256</code> and every length <code>n &lt; 2<sup>64</sup></code>. A list of favourite lengths is a test.</span></li>
+          <li><strong>Truncate</strong><span>A fill outside <code>0..255</code> is reduced to its low 8 bits before any store. <code>−1</code> and <code>256+65</code> are that reduction. The model receives <code>b</code> already truncated. The C contract records the truncation.</span></li>
+          <li><strong>Base</strong><span>In the model the buffer starts at address 0, so the returned <code>x0</code> is 0. The C contract says the returned pointer equals the pointer that was passed. The prologue saved that pointer in <code>x8</code>.</span></li>
+          <li><strong>Canary</strong><span>Bytes past <code>n</code> are outside the model memory, which is exactly <code>n</code> bytes long. The host suite is where those bytes are required to stay poison.</span></li>
+          <li><strong>Empty</strong><span><code>n = 0</code> is the same statement with an empty repetition. It returns the pointer and stores nothing.</span></li>
+        </ul>
+        <figcaption>
+          <span><b>Plate</b> — the memset section writes this out for one kernel</span>
+          <span>The schedule can change. The three lines stay.</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="band" id="testing">
+    <div class="wrap">
+      <div class="band-head">
+        <span class="band-index">04 / Testing</span>
+        <h2>Testing methodology</h2>
+        <p class="band-eyebrow">A sweep for the bytes · one timed row per exit</p>
+      </div>
+      <div class="band-intro">
+        <p>
+          A check asks whether the contract holds on a point. A measurement
+          asks how long that point takes. The host oracle prints both on one
+          line. The check count is the sweep. The coefficient is one exit.
+        </p>
+        <p class="en">
+          <code>strcmp</code> already has a row per exit, because one aligned
+          mismatch hid the empty call, the tail, and the odd pointer.
+          <code>memset</code> should follow that split on the clock. Its byte
+          sweep already enters every exit, and those exits are still folded
+          into the single <code>memset</code> row.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Rule</th>
+              <th>What the suite does</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Rule">Same inputs</td>
+              <td data-label="What the suite does">libc and rt see the same pointer, the same length, and the same fill. The coefficient is <code>libc_ns / rt_ns</code>.</td>
+            </tr>
+            <tr>
+              <td data-label="Rule">Clock</td>
+              <td data-label="What the suite does">Median of 21 samples. Memory rows repeat 256 times. String rows repeat 1,024 times. Numeric, format, and allocator rows are one sample. On this machine the step is 1000 ns. A published win is an unrounded coefficient of at least 1.05 on the row that names the exit. 1.00 is parity. A sample of 0 ns prints 99.</td>
+            </tr>
+            <tr>
+              <td data-label="Rule">Point</td>
+              <td data-label="What the suite does">One length, one alignment, one fill, or one pair of strings. The check records the return, the bytes that must change, and the canary. libc is the reference for those bytes. A length that does not fit the buffer fails the run.</td>
+            </tr>
+            <tr>
+              <td data-label="Rule">Sweep</td>
+              <td data-label="What the suite does">The points are the compares in the body: both sides of each branch, the remainder after a full block, and the offsets the stores do not peel. <code>verify/suite/test_host.c</code> and <code>verify/suite/test_mem.c</code> share that length list. <code>test_mem</code> is the denser alignment pass. <code>make test</code> runs <code>test_host</code>.</td>
+            </tr>
+            <tr>
+              <td data-label="Rule">Row</td>
+              <td data-label="What the suite does">One coefficient names one exit. The aligned 4096-byte <code>memset</code> row is the 64-byte loop with remainder 0 and fill <code>0xA5</code>. It does not speak for the tail, the short path, or an odd address.</td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Two questions</b> — bytes on the sweep, time on the row</span>
+          <span>A passing sweep is not a proof. A proof does not time the binary.</span>
+        </figcaption>
+      </figure>
+      <div class="table-lead">
+        <div class="table-lead-kicker">memset exits</div>
+        <h3 class="table-lead-title">The sweep enters them. The clock names one.</h3>
+        <p>
+          The neon body stores 64, then 16, then 8, 4, 2, and 1. It does not
+          peel to an aligned address. The lengths below are already in the
+          untimed sweep, with fills <code>0</code>, <code>1</code>,
+          <code>0x7F</code>, <code>0x80</code>, <code>0xFF</code>,
+          <code>−1</code>, and <code>256+65</code>. Host offsets run
+          <code>0..32</code>, step 1 below 64 bytes and step 8 from 64 up.
+          <code>test_mem</code> steps by 1 up to offset 64 while
+          <code>n &lt; 128</code>. The clock column is the exit that still
+          shares the one <code>memset</code> coefficient. Those exits get
+          their own rows on the same rule as <code>strcmp</code>.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Exit</th>
+              <th>Lengths in the sweep</th>
+              <th>Body</th>
+              <th>Clock</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Exit">Empty</td>
+              <td data-label="Lengths in the sweep">0</td>
+              <td data-label="Body">No store. The short path takes every <code>tbz</code>.</td>
+              <td data-label="Clock">Folded into <code>memset</code></td>
+            </tr>
+            <tr>
+              <td data-label="Exit">Small</td>
+              <td data-label="Lengths in the sweep">1, 2, 3, 4, 5, 7, 8, 9, 15</td>
+              <td data-label="Body"><code>.Lms_small</code>. <code>tbz</code> on bits 3, 2, 1, 0.</td>
+              <td data-label="Clock">Folded into <code>memset</code></td>
+            </tr>
+            <tr>
+              <td data-label="Exit">Mid</td>
+              <td data-label="Lengths in the sweep">16, 17, 31, 32, 33, 63</td>
+              <td data-label="Body"><code>.Lms_mid</code>. <code>str q</code> until the remainder is below 16, then the scalar tail.</td>
+              <td data-label="Clock">Folded into <code>memset</code></td>
+            </tr>
+            <tr>
+              <td data-label="Exit">Block</td>
+              <td data-label="Lengths in the sweep">64, 128, 256, 512, 4096</td>
+              <td data-label="Body"><code>.Lms_64</code>. Two <code>stp q0, q0</code> per 64 bytes. 4096 leaves remainder 0.</td>
+              <td data-label="Clock"><code>memset</code>, 4096 bytes, 64-byte aligned, fill <code>0xA5</code></td>
+            </tr>
+            <tr>
+              <td data-label="Exit">Tail</td>
+              <td data-label="Lengths in the sweep">65, 127, 129, 255, 257, 1000</td>
+              <td data-label="Body">The 64-byte loop, then <code>.Lms_mid</code> or <code>.Lms_tail</code>.</td>
+              <td data-label="Clock">Folded into <code>memset</code></td>
+            </tr>
+            <tr>
+              <td data-label="Exit">Unaligned</td>
+              <td data-label="Lengths in the sweep">Same lengths. Host offsets 0, 8, 16, 24, 32 on the long sizes. Step 1 below 64.</td>
+              <td data-label="Body">The same stores. There is no peel.</td>
+              <td data-label="Clock">Folded into <code>memset</code>. The timed pointer is aligned.</td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Next rows</b> — empty, small, mid, tail, unaligned</span>
+          <span>Each gets the 256-iteration median. The sweep stays one counter.</span>
+        </figcaption>
+      </figure>
+      <div class="table-lead">
+        <div class="table-lead-kicker">strcmp rows</div>
+        <h3 class="table-lead-title">The split already running</h3>
+        <p>
+          Each name is one exit of <code>rt_strcmp_neon</code>, timed for
+          1,024 iterations against Apple <code>strcmp</code> on the same
+          pointers. The main <code>strcmp</code> row also carries the lane
+          sweep, the low-byte sweep, and the unaligned sweep. A short row
+          sits on one or two clock steps, so its coefficient is read as a
+          tick, and the long rows are read as the exit.
+        </p>
+      </div>
+      <figure class="plate">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>Row</th>
+              <th>Exit</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-label="Row"><code>strcmp</code></td>
+              <td data-label="Exit">Both pointers 64-byte aligned. First difference at byte 200, in the low half of a later 32-byte chunk.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_s0</code></td>
+              <td data-label="Exit">Both empty. The index tail returns on lane 0.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_b0</code></td>
+              <td data-label="Exit">First byte differs.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_b16</code></td>
+              <td data-label="Exit">First difference in the high half of the first 32-byte chunk.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_eq</code></td>
+              <td data-label="Exit">Equal for 255 bytes. The bytes after the NUL differ, so a step past the terminator fails.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_pref</code></td>
+              <td data-label="Exit">One string ends at byte 40.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_lo</code></td>
+              <td data-label="Exit">Matched bytes of <code>0x01</code>, difference at byte 40. The index tail must not treat a small byte as a stop.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_hi</code></td>
+              <td data-label="Exit"><code>0x80</code> against <code>0x7F</code> at byte 40. Unsigned order.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_ua1</code></td>
+              <td data-label="Exit">Both pointers at +1, difference at byte 200.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_ua8</code></td>
+              <td data-label="Exit">Both pointers at +8, difference at byte 200.</td>
+            </tr>
+            <tr>
+              <td data-label="Row"><code>strcmp_mix</code></td>
+              <td data-label="Exit">One pointer aligned, the other at +1, difference at byte 200.</td>
+            </tr>
+          </tbody>
+        </table>
+        <figcaption>
+          <span><b>Pattern</b> — the memset clock rows follow this table</span>
+          <span>Scalar <code>strcmp</code> uses the same names. An odd pointer skips its word loop.</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
   <section class="band" id="memset">
     <div class="wrap">
       <div class="band-head">
-        <span class="band-index">03 / Memset</span>
+        <span class="band-index">05 / Memset</span>
         <h2>The checked argument</h2>
         <p class="band-eyebrow">rt_memset_neon · 56 words · every n below 2<sup>64</sup></p>
       </div>
@@ -500,7 +780,7 @@ Theorem rt_memset_neon_16 :
   <section class="band" id="today">
     <div class="wrap">
       <div class="band-head">
-        <span class="band-index">04 / Today</span>
+        <span class="band-index">06 / Today</span>
         <h2>What already runs</h2>
         <p class="band-eyebrow">Oracle for behaviour · SQCSA for the C · coqc on Rocq 9.2</p>
       </div>

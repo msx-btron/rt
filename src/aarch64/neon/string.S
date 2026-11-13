@@ -61,53 +61,52 @@ SYM(rt_strlen_neon):
     sub     x0, x0, x9
     ret
 
-/* ---- strcmp ---- */
+/* ---- strcmp ----
+   A zero lane after cmeq/and is a mismatch or a NUL. Matched nonzero
+   bytes stay nonzero, so one uminv per half covers both checks.
+   The tail is the first zero lane, then one unsigned subtract.
+   Over-read is one 32-byte chunk, same as the previous body. */
 .globl SYM(rt_strcmp_neon)
 #ifndef __APPLE__
 .type SYM(rt_strcmp_neon), %function
 #endif
 .p2align 5
 SYM(rt_strcmp_neon):
+    .p2align 4
 50:
-    ldp     q0, q1, [x0]
-    ldp     q2, q3, [x1]
+    ldp     q0, q1, [x0], #32
+    ldp     q2, q3, [x1], #32
     cmeq    v4.16b, v0.16b, v2.16b
     cmeq    v5.16b, v1.16b, v3.16b
-    uminv   b6, v4.16b
-    umov    w2, v6.b[0]
-    cmp     w2, #0xff
-    b.ne    60f
-    uminv   b6, v5.16b
-    umov    w2, v6.b[0]
-    cmp     w2, #0xff
-    b.ne    55f
-    cmeq    v4.16b, v0.16b, #0
-    cmeq    v5.16b, v1.16b, #0
-    orr     v6.16b, v4.16b, v5.16b
-    umaxv   b7, v6.16b
-    umov    w2, v7.b[0]
+    and     v0.16b, v0.16b, v4.16b
+    and     v1.16b, v1.16b, v5.16b
+    uminv   b4, v0.16b
+    uminv   b5, v1.16b
+    fmov    w2, s4
+    fmov    w3, s5
+    ands    w4, w2, w3
+    b.ne    50b
     cbnz    w2, 70f
-    add     x0, x0, #32
-    add     x1, x1, #32
-    b       50b
-
-55:
-    add     x0, x0, #16
-    add     x1, x1, #16
-    mov     v0.16b, v1.16b
-    mov     v2.16b, v3.16b
-60:
-    ldrb    w2, [x0], #1
-    ldrb    w3, [x1], #1
-    subs    w2, w2, w3
-    b.ne    71f
-    cbnz    w3, 60b
+    sub     x0, x0, #16
+    sub     x1, x1, #16
+    b       60f
 70:
-    mov     w0, #0
+    mov     v0.16b, v1.16b
+60:
+    eor     v1.16b, v1.16b, v1.16b
+    cmhi    v0.16b, v0.16b, v1.16b
+    ldr     q1, 51f
+    orr     v0.16b, v0.16b, v1.16b
+    uminv   b0, v0.16b
+    fmov    w2, s0
+    sub     x2, x2, #16
+    ldrb    w3, [x0, x2]
+    ldrb    w4, [x1, x2]
+    sub     w0, w3, w4
     ret
-71:
-    mov     w0, w2
-    ret
+    .p2align 4
+51:
+    .byte   0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 
 /* ---- strchr ---- */
 .globl SYM(rt_strchr_neon)

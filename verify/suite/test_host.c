@@ -676,6 +676,62 @@ typedef size_t (*strlen_fn)(const char *);
 typedef int (*strcmp_fn)(const char *, const char *);
 typedef char *(*strchr_fn)(const char *, int);
 
+/* n matching bytes, then NUL. fill < 0 writes 'a'+i%26; otherwise that byte.
+   at in [0, n] replaces one byte (at == n is a prefix: b continues one byte).
+   The byte after the NUL differs, so a step past the terminator fails sign_eq.
+   Caller provides n + 2 bytes, and 32 bytes of readable tail for the neon load. */
+static void strcmp_set(char *a, char *b, int n, int at, int fill, int av, int bv)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        if (fill < 0)
+            a[i] = b[i] = (char)('a' + (i % 26));
+        else
+            a[i] = b[i] = (char)fill;
+    }
+    a[n] = b[n] = 0;
+    a[n + 1] = (char)0x5A;
+    b[n + 1] = (char)0xA5;
+    if (at >= 0 && at <= n) {
+        a[at] = (char)av;
+        b[at] = (char)bv;
+        if (at == n)
+            b[n + 1] = 0;
+    }
+}
+
+static void time_strcmp(struct row *r, strcmp_fn fn, const char *a, const char *b)
+{
+    enum { LOOPS = ITER_STR };
+    uint64_t lc[SAMPLES], rt_t[SAMPLES];
+    uint64_t t0, t1;
+    volatile int sink = 0;
+    size_t k;
+    int si;
+
+    row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+    row_add(r, sign_eq(fn(b, a), strcmp(b, a)));
+    for (k = 0; k < WARM; k++) {
+        sink += strcmp(a, b);
+        sink += fn(a, b);
+    }
+    for (si = 0; si < SAMPLES; si++) {
+        t0 = now_ns();
+        for (k = 0; k < LOOPS; k++)
+            sink += strcmp(a, b);
+        t1 = now_ns();
+        lc[si] = t1 - t0;
+        t0 = now_ns();
+        for (k = 0; k < LOOPS; k++)
+            sink += fn(a, b);
+        t1 = now_ns();
+        rt_t[si] = t1 - t0;
+    }
+    r->libc_ns = median_u64(lc, SAMPLES);
+    r->rt_ns = median_u64(rt_t, SAMPLES);
+    (void)sink;
+}
+
 static void bench_strlen_fn(struct row *r, strlen_fn fn)
 {
     enum { LOOPS = ITER_STR };
@@ -739,11 +795,13 @@ static void bench_strlen_fn(struct row *r, strlen_fn fn)
 static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
 {
     enum { LOOPS = ITER_STR };
-    static char a[256] __attribute__((aligned(64)));
-    static char b[256] __attribute__((aligned(64)));
+    static char a[512] __attribute__((aligned(64)));
+    static char b[512] __attribute__((aligned(64)));
+    static char raw[1280] __attribute__((aligned(64)));
     size_t i, k;
     uint64_t t0, t1;
     volatile int sink = 0;
+    int at, off;
 
     for (i = 0; i < 255; i++)
         a[i] = b[i] = (char)('a' + (i % 26));
@@ -792,6 +850,49 @@ static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
             row_add(r, sign_eq(fn(ub + al, ua + al), strcmp(ub + al, ua + al)));
         }
     }
+    /* Each lane of two 32-byte chunks, then a NUL whose following bytes differ. */
+    for (at = 0; at <= 63; at++) {
+        strcmp_set(a, b, 96, at, -1, 'a', 'z');
+        row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+        row_add(r, sign_eq(fn(b, a), strcmp(b, a)));
+        strcmp_set(a, b, at, -1, -1, 0, 0);
+        row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+    }
+    /* Matched bytes below 16: the index tail must not treat them as a stop. */
+    for (at = 0; at <= 48; at++) {
+        strcmp_set(a, b, 64, at, 1, 2, 9);
+        row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+        row_add(r, sign_eq(fn(b, a), strcmp(b, a)));
+    }
+    strcmp_set(a, b, 64, 40, 0x80, 0x80, 0x7F);
+    row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+    row_add(r, sign_eq(fn(b, a), strcmp(b, a)));
+    strcmp_set(a, b, 64, 20, -1, (char)0xFF, 1);
+    row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+    row_add(r, sign_eq(fn(b, a), strcmp(b, a)));
+    for (off = 0; off <= 15; off++) {
+        strcmp_set(raw + off, raw + 640 + off, 100, -1, -1, 0, 0);
+        row_add(r, sign_eq(fn(raw + off, raw + 640 + off),
+                           strcmp(raw + off, raw + 640 + off)));
+        strcmp_set(raw + off, raw + 640 + off, 220, 200, -1, 'a', 'z');
+        row_add(r, sign_eq(fn(raw + off, raw + 640 + off),
+                           strcmp(raw + off, raw + 640 + off)));
+        row_add(r, sign_eq(fn(raw + 640 + off, raw + off),
+                           strcmp(raw + 640 + off, raw + off)));
+    }
+    for (off = 1; off <= 15; off += 7) {
+        strcmp_set(a, raw + off, 80, 50, -1, 'a', 'z');
+        row_add(r, sign_eq(fn(a, raw + off), strcmp(a, raw + off)));
+        row_add(r, sign_eq(fn(raw + off, a), strcmp(raw + off, a)));
+        strcmp_set(raw + off, b, 80, 16, -1, 'q', 'a');
+        row_add(r, sign_eq(fn(raw + off, b), strcmp(raw + off, b)));
+        row_add(r, sign_eq(fn(b, raw + off), strcmp(b, raw + off)));
+    }
+
+    for (i = 0; i < 255; i++)
+        a[i] = b[i] = (char)('a' + (i % 26));
+    a[255] = b[255] = 0;
+    b[200] = 'z';
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -816,6 +917,68 @@ static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
         r->rt_ns = median_u64(rt_t, SAMPLES);
     }
     (void)sink;
+}
+
+/* Same 1024-iteration clock as strcmp. These rows are the other exits:
+   immediate NUL, first byte, high half of the first chunk, equal scan to
+   NUL, prefix, bytes below 16, high unsigned bytes, and unaligned pointers. */
+static void bench_strcmp_more(const char *backend, strcmp_fn fn)
+{
+    static char a[512] __attribute__((aligned(64)));
+    static char b[512] __attribute__((aligned(64)));
+    static char raw[1280] __attribute__((aligned(64)));
+    struct row *r;
+
+    r = row_begin("strcmp_s0", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, b, 0, -1, -1, 0, 0);
+        time_strcmp(r, fn, a, b);
+    }
+    r = row_begin("strcmp_b0", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, b, 32, 0, -1, 'b', 'a');
+        time_strcmp(r, fn, a, b);
+    }
+    r = row_begin("strcmp_b16", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, b, 48, 16, -1, 'a', 'z');
+        time_strcmp(r, fn, a, b);
+    }
+    r = row_begin("strcmp_eq", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, b, 255, -1, -1, 0, 0);
+        time_strcmp(r, fn, a, b);
+    }
+    r = row_begin("strcmp_pref", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, b, 40, 40, -1, 0, 'z');
+        time_strcmp(r, fn, a, b);
+    }
+    r = row_begin("strcmp_lo", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, b, 64, 40, 1, 2, 9);
+        time_strcmp(r, fn, a, b);
+    }
+    r = row_begin("strcmp_hi", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, b, 64, 40, 0x80, 0x80, 0x7F);
+        time_strcmp(r, fn, a, b);
+    }
+    r = row_begin("strcmp_ua1", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(raw + 1, raw + 401, 255, 200, -1, 'a', 'z');
+        time_strcmp(r, fn, raw + 1, raw + 401);
+    }
+    r = row_begin("strcmp_ua8", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(raw + 8, raw + 408, 255, 200, -1, 'a', 'z');
+        time_strcmp(r, fn, raw + 8, raw + 408);
+    }
+    r = row_begin("strcmp_mix", backend, GRP_STRING);
+    if (r) {
+        strcmp_set(a, raw + 1, 255, 200, -1, 'a', 'z');
+        time_strcmp(r, fn, a, raw + 1);
+    }
 }
 
 static void bench_strchr_fn(struct row *r, strchr_fn fn)
@@ -1110,6 +1273,7 @@ static void run_strings(void)
     if (r) bench_strcpy(r);
     r = row_begin("strcmp", "scalar", GRP_STRING);
     if (r) bench_strcmp_fn(r, rt_strcmp);
+    bench_strcmp_more("scalar", rt_strcmp);
     r = row_begin("strchr", "scalar", GRP_STRING);
     if (r) bench_strchr_fn(r, rt_strchr);
     r = row_begin("strstr", "scalar", GRP_STRING);
@@ -1125,6 +1289,7 @@ static void run_strings_neon(void)
     if (r) bench_strlen_fn(r, rt_strlen_neon);
     r = row_begin("strcmp", "neon", GRP_STRING);
     if (r) bench_strcmp_fn(r, rt_strcmp_neon);
+    bench_strcmp_more("neon", rt_strcmp_neon);
     r = row_begin("strchr", "neon", GRP_STRING);
     if (r) bench_strchr_fn(r, rt_strchr_neon);
 }
