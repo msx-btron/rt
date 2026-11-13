@@ -27,13 +27,21 @@ qemu-p2:
 	$(MAKE) -C verify qemu-p2
 
 # Coq check. One file: rt_memset_neon for every n below 2^64.
+# `coqc` is the compatibility name. Rocq 9.2's compiler is `rocq compile`.
 COQC ?= coqc
 
 verify:
-	@command -v $(COQC) >/dev/null 2>&1 || { echo "coqc not on PATH"; exit 1; }
-	@echo "verify: coqc coq/MemsetNeon.v"
-	@$(COQC) coq/MemsetNeon.v
-	@echo "verify: rt_memset_neon, n < 2^64 checked"
+	@set -e; \
+	if command -v "$(COQC)" >/dev/null 2>&1; then \
+	  compiler="$(COQC)"; \
+	elif command -v rocq >/dev/null 2>&1; then \
+	  compiler="rocq compile"; \
+	else \
+	  echo "coqc not on PATH"; exit 1; \
+	fi; \
+	echo "verify: $$compiler coq/MemsetNeon.v"; \
+	$$compiler coq/MemsetNeon.v; \
+	echo "verify: rt_memset_neon, n < 2^64 checked"
 
 clean:
 	$(MAKE) -C verify clean

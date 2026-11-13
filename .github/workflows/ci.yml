@@ -233,9 +233,9 @@ jobs:
         run: |
           set -eux
           docker pull rocq/rocq-prover:9.2
-          # The image entrypoint is `opam exec --`. A job container drops it,
-          # and the runner user has no opam root.
-          docker run --rm rocq/rocq-prover:9.2 coqc -v
+          # Image entrypoint is `opam exec --`. It ships `rocq compile`,
+          # not the `coqc` compatibility shim.
+          docker run --rm rocq/rocq-prover:9.2 rocq compile -v
       - name: make verify
         run: |
           set -eux
