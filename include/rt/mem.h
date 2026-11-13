@@ -15,10 +15,11 @@
      mmx        Pentium MMX movq, EMMS on every exit that touched MMX
      sse        i386 XMM movups/movaps (Pentium III; no SSE2 integer ops)
      sse2       x86-64, 16-byte, dest-aligned movdqa
+     avx        x86-64, 32-byte, AVX1, vzeroupper on every return
      avx2       x86-64, 32-byte, vzeroupper on every return
      avx512     x86-64, 64-byte ZMM, AVX-512F+BW; leaves ZMM state dirty
      neon/sve   AArch64
-     sme        Apple SME2. memcpy_sme, memset_sme, memcmp_sme.
+     sme        Apple SME2. memcpy, memmove, memset, memcmp.
                 The proved neon memset stays separate.
      rvv        RV32 or RV64 V, m8 e8 (one object per XLEN)
 */
@@ -50,6 +51,10 @@ void *rt_memcpy_sse2(void *dst, const void *src, size_t n);
 void *rt_memset_sse2(void *dst, int c, size_t n);
 int   rt_memcmp_sse2(const void *a, const void *b, size_t n);
 
+void *rt_memcpy_avx(void *dst, const void *src, size_t n);
+void *rt_memset_avx(void *dst, int c, size_t n);
+int   rt_memcmp_avx(const void *a, const void *b, size_t n);
+
 void *rt_memcpy_avx2(void *dst, const void *src, size_t n);
 void *rt_memset_avx2(void *dst, int c, size_t n);
 int   rt_memcmp_avx2(const void *a, const void *b, size_t n);
@@ -67,6 +72,7 @@ void *rt_memset_sve(void *dst, int c, size_t n);
 int   rt_memcmp_sve(const void *a, const void *b, size_t n);
 
 void *rt_memcpy_sme(void *dst, const void *src, size_t n);
+void *rt_memmove_sme(void *dst, const void *src, size_t n);
 void *rt_memset_sme(void *dst, int c, size_t n);
 int   rt_memcmp_sme(const void *a, const void *b, size_t n);
 

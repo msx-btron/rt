@@ -1,5 +1,5 @@
 # rt — multi-arch kernel CI
-# Native x86_64 + QEMU user-mode for i386 / AArch64 / RISC-V.
+# Native x86_64, QEMU system for IA-32 and EM64T, QEMU user-mode for the rest.
 name: ci
 
 on:
@@ -17,10 +17,10 @@ env:
 
 jobs:
   # ------------------------------------------------------------------
-  # Host oracle: scalar + SSE2 + AVX2 + AVX-512 (CPU-probed)
+  # Host oracle: scalar + SSE2 + AVX + AVX2 + AVX-512 (CPU-probed)
   # ------------------------------------------------------------------
   x86_64-native:
-    name: EM64T SSE2/AVX2/AVX-512
+    name: EM64T SSE2/AVX/AVX2/AVX-512
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -30,8 +30,38 @@ jobs:
           cc $CFLAGS -Iinclude -o /tmp/test_host verify/suite/test_host.c \
             src/common/scalar/mem.c src/common/scalar/string.c \
             src/common/scalar/stdlib.c src/common/scalar/stdio.c \
-            src/x86_64/sse2/mem.s src/x86_64/avx2/mem.s src/x86_64/avx512/mem.s
-          /tmp/test_host
+            src/x86_64/sse2/mem.s src/x86_64/avx/mem.s \
+            src/x86_64/avx2/mem.s src/x86_64/avx512/mem.s
+          NO_COLOR=1 TERM=dumb /tmp/test_host > /tmp/oracle.txt
+          cat /tmp/oracle.txt
+          grep -q '== backend: sse2 ==' /tmp/oracle.txt
+          grep -q '== backend: avx ==' /tmp/oracle.txt
+          grep -q '== backend: avx2 ==' /tmp/oracle.txt
+          if grep -qw avx512f /proc/cpuinfo && grep -qw avx512bw /proc/cpuinfo; then
+            grep -q '== backend: avx512 ==' /tmp/oracle.txt
+          else
+            echo "host CPU has no AVX-512; the avx512 table stays off"
+          fi
+
+  # ------------------------------------------------------------------
+  # Two Alpine guests, no installer. TCG executes IA-32 (REP/MMX/SSE)
+  # and EM64T (SSE2/AVX/AVX2). AVX-512 is linked and runs on the native
+  # job when the runner CPU has AVX512F and AVX512BW. TCG has no ZMM.
+  # ------------------------------------------------------------------
+  intel-qemu:
+    name: IA-32 and EM64T QEMU
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang, lld, and QEMU system
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            clang lld qemu-system-x86 perl binutils
+      - name: IA-32 guest
+        run: sh scripts/avx512.sh ia32 tcg
+      - name: EM64T guest
+        run: sh scripts/avx512.sh em64t tcg
 
   # ------------------------------------------------------------------
   # i386 ladder under qemu-i386: 386 / MMX / SSE (+ assemble PC-98)
@@ -254,6 +284,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs:
       - x86_64-native
+      - intel-qemu
       - i386-qemu
       - aarch64-neon-qemu
       - aarch64-sve
@@ -266,6 +297,7 @@ jobs:
       - name: Results
         run: |
           echo "x86_64-native:      ${{ needs.x86_64-native.result }}"
+          echo "intel-qemu:         ${{ needs.intel-qemu.result }}"
           echo "i386-qemu:          ${{ needs.i386-qemu.result }}"
           echo "aarch64-neon-qemu:  ${{ needs.aarch64-neon-qemu.result }}"
           echo "aarch64-sve:        ${{ needs.aarch64-sve.result }}"
@@ -276,6 +308,7 @@ jobs:
           # Fail the workflow if any required job failed
           for r in \
             "${{ needs.x86_64-native.result }}" \
+            "${{ needs.intel-qemu.result }}" \
             "${{ needs.i386-qemu.result }}" \
             "${{ needs.aarch64-neon-qemu.result }}" \
             "${{ needs.aarch64-sve.result }}" \

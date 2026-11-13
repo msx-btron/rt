@@ -1,5 +1,5 @@
 # BSD make (macOS) and GNU make.
-.PHONY: all test test32 qemu qemu-p2 qemu-p3 clean
+.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 clean
 
 all: test
 
@@ -17,6 +17,9 @@ qemu-p3:
 
 qemu-p2:
 	sh ../scripts/qemu.sh pentium2
+
+avx512:
+	sh ../scripts/avx512.sh
 
 clean:
 	rm -rf ../build

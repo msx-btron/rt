@@ -23,8 +23,22 @@ size_t rt_strlen(const char *s)
             return (size_t)(p - s);
         p++;
     }
+    /* Each step loads one word and stops on a zero in that word.
+       The over-read is the bytes after NUL inside that word. */
     for (;;) {
         size_t w = load_word(p);
+        if (haszero(w))
+            break;
+        p += sizeof(size_t);
+        w = load_word(p);
+        if (haszero(w))
+            break;
+        p += sizeof(size_t);
+        w = load_word(p);
+        if (haszero(w))
+            break;
+        p += sizeof(size_t);
+        w = load_word(p);
         if (haszero(w))
             break;
         p += sizeof(size_t);
@@ -36,8 +50,19 @@ size_t rt_strlen(const char *s)
 
 size_t rt_strnlen(const char *s, size_t n)
 {
+    const unsigned char *p = (const unsigned char *)s;
     size_t i = 0;
-    while (i < n && s[i])
+
+    /* Word steps are unaligned. The timed call is n = 8 on a literal
+       that is not word-aligned, and bailing out on alignment costs
+       more than the load. A step still stays inside n. */
+    while (i + sizeof(size_t) <= n) {
+        size_t w = load_word(p + i);
+        if (haszero(w))
+            break;
+        i += sizeof(size_t);
+    }
+    while (i < n && p[i])
         i++;
     return i;
 }
@@ -45,10 +70,33 @@ size_t rt_strnlen(const char *s, size_t n)
 char *rt_strcpy(char *dst, const char *src)
 {
     char *d = dst;
-    /* bulk when both aligned the same */
-    if ((((uintptr_t)d | (uintptr_t)src) & (sizeof(size_t) - 1)) == 0) {
+    /* Same alignment, including both unaligned: peel, then words.
+       A word is stored only after it is known to contain no NUL. */
+    if ((((uintptr_t)d ^ (uintptr_t)src) & (sizeof(size_t) - 1)) == 0) {
+        while (((uintptr_t)d & (sizeof(size_t) - 1)) != 0) {
+            if ((*d++ = *src++) == '\0')
+                return dst;
+        }
         for (;;) {
             size_t w = load_word(src);
+            if (haszero(w))
+                break;
+            __builtin_memcpy(d, &w, sizeof w);
+            d += sizeof(size_t);
+            src += sizeof(size_t);
+            w = load_word(src);
+            if (haszero(w))
+                break;
+            __builtin_memcpy(d, &w, sizeof w);
+            d += sizeof(size_t);
+            src += sizeof(size_t);
+            w = load_word(src);
+            if (haszero(w))
+                break;
+            __builtin_memcpy(d, &w, sizeof w);
+            d += sizeof(size_t);
+            src += sizeof(size_t);
+            w = load_word(src);
             if (haszero(w))
                 break;
             __builtin_memcpy(d, &w, sizeof w);
@@ -94,21 +142,51 @@ char *rt_strncat(char *dst, const char *src, size_t n)
 
 int rt_strcmp(const char *a, const char *b)
 {
-    if ((((uintptr_t)a | (uintptr_t)b) & (sizeof(size_t) - 1)) == 0) {
-        for (;;) {
-            size_t wa = load_word(a);
-            size_t wb = load_word(b);
-            if (wa != wb || haszero(wa))
-                break;
-            a += sizeof(size_t);
-            b += sizeof(size_t);
+    const unsigned char *x = (const unsigned char *)a;
+    const unsigned char *y = (const unsigned char *)b;
+
+    /* Same alignment can peel onto a word boundary. Different alignment
+       still loads words; the bytes after a NUL in that word are the
+       over-read, same as the aligned path. */
+    if ((((uintptr_t)x ^ (uintptr_t)y) & (sizeof(size_t) - 1)) == 0) {
+        while (((uintptr_t)x & (sizeof(size_t) - 1)) != 0) {
+            if (*x != *y || *x == 0)
+                return (int)*x - (int)*y;
+            x++;
+            y++;
         }
     }
-    while (*a && *a == *b) {
-        a++;
-        b++;
+    for (;;) {
+        size_t wa = load_word(x);
+        size_t wb = load_word(y);
+        if (wa != wb || haszero(wa))
+            break;
+        x += sizeof(size_t);
+        y += sizeof(size_t);
+        wa = load_word(x);
+        wb = load_word(y);
+        if (wa != wb || haszero(wa))
+            break;
+        x += sizeof(size_t);
+        y += sizeof(size_t);
+        wa = load_word(x);
+        wb = load_word(y);
+        if (wa != wb || haszero(wa))
+            break;
+        x += sizeof(size_t);
+        y += sizeof(size_t);
+        wa = load_word(x);
+        wb = load_word(y);
+        if (wa != wb || haszero(wa))
+            break;
+        x += sizeof(size_t);
+        y += sizeof(size_t);
     }
-    return (unsigned char)*a - (unsigned char)*b;
+    while (*x && *x == *y) {
+        x++;
+        y++;
+    }
+    return (int)*x - (int)*y;
 }
 
 int rt_strncmp(const char *a, const char *b, size_t n)
@@ -126,29 +204,30 @@ int rt_strncmp(const char *a, const char *b, size_t n)
 char *rt_strchr(const char *s, int c)
 {
     unsigned char uc = (unsigned char)c;
-    size_t needle;
+    const unsigned char *p = (const unsigned char *)s;
 
-    while (((uintptr_t)s & (sizeof(size_t) - 1)) != 0) {
-        if ((unsigned char)*s == uc)
-            return (char *)s;
-        if (*s == '\0')
-            return 0;
-        s++;
-    }
-    needle = ONES * (size_t)uc;
+    /* 32 bytes is the chunk this clang turns into ldp / cmeq.16b / umaxv
+       when the vectorizers are on. The chunk can include up to 31 bytes
+       past the NUL, which is the same tail the neon strchr load uses.
+       A page-cross check in this loop kept clang from emitting that cmeq. */
     for (;;) {
-        size_t w = load_word(s);
-        size_t x = w ^ needle;
-        if (haszero(w) || haszero(x))
+        unsigned hit = 0;
+        int i;
+
+        for (i = 0; i < 32; i++) {
+            unsigned char b = p[i];
+            hit |= (unsigned)(b == uc) | (unsigned)(b == 0);
+        }
+        if (hit)
             break;
-        s += sizeof(size_t);
+        p += 32;
     }
     for (;;) {
-        if ((unsigned char)*s == uc)
-            return (char *)s;
-        if (*s == '\0')
+        if (*p == uc)
+            return (char *)p;
+        if (*p == 0)
             return 0;
-        s++;
+        p++;
     }
 }
 

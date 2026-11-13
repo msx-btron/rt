@@ -304,20 +304,21 @@
       <div class="band-head">
         <span class="band-index">04 / Testing</span>
         <h2>Testing methodology</h2>
-        <p class="band-eyebrow">A sweep for the bytes · one timed row per exit</p>
+        <p class="band-eyebrow">A sweep for the bytes · one timed row</p>
       </div>
       <div class="band-intro">
         <p>
           A check asks whether the contract holds on a point. A measurement
           asks how long that point takes. The host oracle prints both on one
-          line. The check count is the sweep. The coefficient is one exit.
+          line. The check count is the sweep. The coefficient is one call.
         </p>
         <p class="en">
-          <code>strcmp</code> already has a row per exit, because one aligned
-          mismatch hid the empty call, the tail, and the odd pointer.
-          <code>memset</code> should follow that split on the clock. Its byte
-          sweep already enters every exit, and those exits are still folded
-          into the single <code>memset</code> row.
+          <code>strcmp</code> times one aligned mismatch, at byte 200. The
+          empty call, the first chunk, the equal scan, the low bytes, and the
+          odd pointer stay in that row as checks. A short exit is one or two
+          clock steps, so it is not its own row. <code>memset</code> is the
+          same shape: the byte sweep enters every exit, and the clock is the
+          single aligned 4096-byte fill.
         </p>
       </div>
       <figure class="plate">
@@ -422,80 +423,62 @@
           </tbody>
         </table>
         <figcaption>
-          <span><b>Next rows</b> — empty, small, mid, tail, unaligned</span>
-          <span>Each gets the 256-iteration median. The sweep stays one counter.</span>
+          <span><b>One row</b> — empty, small, mid, tail, unaligned</span>
+          <span>Those exits are checks. The clock is the aligned 4096-byte fill.</span>
         </figcaption>
       </figure>
       <div class="table-lead">
-        <div class="table-lead-kicker">strcmp rows</div>
-        <h3 class="table-lead-title">The split already running</h3>
+        <div class="table-lead-kicker">strcmp</div>
+        <h3 class="table-lead-title">One clock</h3>
         <p>
-          Each name is one exit of <code>rt_strcmp_neon</code>, timed for
-          1,024 iterations against Apple <code>strcmp</code> on the same
-          pointers. The main <code>strcmp</code> row also carries the lane
-          sweep, the low-byte sweep, and the unaligned sweep. A short row
-          sits on one or two clock steps, so its coefficient is read as a
-          tick, and the long rows are read as the exit.
+          The table times one <code>strcmp</code>. Both pointers are 64-byte
+          aligned and the first difference is at byte 200. Empty strings, a
+          difference in the first chunk, an equal scan to the NUL, a prefix,
+          bytes below 16, unsigned high bytes, and unaligned pointers stay
+          inside that row as checks. A short exit sits on one or two clock
+          steps, so it is not a row.
         </p>
       </div>
       <figure class="plate">
         <table class="cmp">
           <thead>
             <tr>
-              <th>Row</th>
-              <th>Exit</th>
+              <th>Check</th>
+              <th>What it covers</th>
+              <th>Clock</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td data-label="Row"><code>strcmp</code></td>
-              <td data-label="Exit">Both pointers 64-byte aligned. First difference at byte 200, in the low half of a later 32-byte chunk.</td>
+              <td data-label="Check">Main</td>
+              <td data-label="What it covers">Both pointers 64-byte aligned. First difference at byte 200.</td>
+              <td data-label="Clock"><code>strcmp</code>, 1,024 iterations, median of 21</td>
             </tr>
             <tr>
-              <td data-label="Row"><code>strcmp_s0</code></td>
-              <td data-label="Exit">Both empty. The index tail returns on lane 0.</td>
+              <td data-label="Check">Empty and prefix</td>
+              <td data-label="What it covers">Both empty. One string ends while the other continues. The byte after the NUL differs, so a step past the terminator fails.</td>
+              <td data-label="Clock">Folded into <code>strcmp</code></td>
             </tr>
             <tr>
-              <td data-label="Row"><code>strcmp_b0</code></td>
-              <td data-label="Exit">First byte differs.</td>
+              <td data-label="Check">First chunk</td>
+              <td data-label="What it covers">A difference in each lane of the first 64 bytes, including the first byte and the high half of the first 32-byte chunk.</td>
+              <td data-label="Clock">Folded into <code>strcmp</code></td>
             </tr>
             <tr>
-              <td data-label="Row"><code>strcmp_b16</code></td>
-              <td data-label="Exit">First difference in the high half of the first 32-byte chunk.</td>
+              <td data-label="Check">Low and unsigned</td>
+              <td data-label="What it covers">Matched bytes of <code>0x01</code>. <code>0x80</code> against <code>0x7F</code>, and <code>0xFF</code> against 1. The result is an unsigned byte difference.</td>
+              <td data-label="Clock">Folded into <code>strcmp</code></td>
             </tr>
             <tr>
-              <td data-label="Row"><code>strcmp_eq</code></td>
-              <td data-label="Exit">Equal for 255 bytes. The bytes after the NUL differ, so a step past the terminator fails.</td>
-            </tr>
-            <tr>
-              <td data-label="Row"><code>strcmp_pref</code></td>
-              <td data-label="Exit">One string ends at byte 40.</td>
-            </tr>
-            <tr>
-              <td data-label="Row"><code>strcmp_lo</code></td>
-              <td data-label="Exit">Matched bytes of <code>0x01</code>, difference at byte 40. The index tail must not treat a small byte as a stop.</td>
-            </tr>
-            <tr>
-              <td data-label="Row"><code>strcmp_hi</code></td>
-              <td data-label="Exit"><code>0x80</code> against <code>0x7F</code> at byte 40. Unsigned order.</td>
-            </tr>
-            <tr>
-              <td data-label="Row"><code>strcmp_ua1</code></td>
-              <td data-label="Exit">Both pointers at +1, difference at byte 200.</td>
-            </tr>
-            <tr>
-              <td data-label="Row"><code>strcmp_ua8</code></td>
-              <td data-label="Exit">Both pointers at +8, difference at byte 200.</td>
-            </tr>
-            <tr>
-              <td data-label="Row"><code>strcmp_mix</code></td>
-              <td data-label="Exit">One pointer aligned, the other at +1, difference at byte 200.</td>
+              <td data-label="Check">Unaligned</td>
+              <td data-label="What it covers">Offsets 0 through 15, and one side aligned against the other at an odd offset.</td>
+              <td data-label="Clock">Folded into <code>strcmp</code>. The timed pointers are aligned.</td>
             </tr>
           </tbody>
         </table>
         <figcaption>
-          <span><b>Pattern</b> — the memset clock rows follow this table</span>
-          <span>Scalar <code>strcmp</code> uses the same names. An odd pointer skips its word loop.</span>
+          <span><b>One row</b> — scalar and neon</span>
+          <span>The same checks, one clock. An odd pointer is a check.</span>
         </figcaption>
       </figure>
     </div>

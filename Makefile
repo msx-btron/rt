@@ -1,12 +1,14 @@
 # rt — host oracle + optional QEMU vintage profiles
 #
-# macOS M4:  make          → two tables: scalar, neon
-# Linux x86_64: make       → scalar + sse2/avx2/avx512 tables
+# macOS M4:  make          → scalar (vectorize off), scalar (vectorize on),
+#                            neon, sme. Each table is its own binary.
+# Linux x86_64: make       → scalar off, scalar on, sse2/avx/avx2/avx512
 # Linux + qemu: make qemu  → pentium2 + pentium3 tables
+# make avx512              → IA-32 and EM64T Alpine images, each ≤50MB
 # make security            → clang --analyze, flawfinder, cppcheck, ASCII report
 # make verify              → coqc verify/models/MemsetNeon.v (rt_memset_neon, n < 2^64)
 #
-.PHONY: all test test32 qemu qemu-p2 qemu-p3 clean verify \
+.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 clean verify \
 	security security-report sec-scalar sec-verify
 
 all: test
@@ -25,6 +27,9 @@ qemu-p3:
 
 qemu-p2:
 	$(MAKE) -C verify qemu-p2
+
+avx512:
+	$(MAKE) -C verify avx512
 
 # Coq check. One file: rt_memset_neon for every n below 2^64.
 # `coqc` is the compatibility name. Rocq 9.2's compiler is `rocq compile`.

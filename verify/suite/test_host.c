@@ -20,6 +20,26 @@
 #include <stdarg.h>
 #include <time.h>
 #include <limits.h>
+
+/* One binary runs one table. With no RT_TABLE_* macro the binary runs
+   every table it was linked with, which is the CI and qemu shape.
+   RT_VECTORIZE marks the scalar build whose C was compiled with the
+   vectorizers on. The sources are the same either way. */
+#if defined(RT_TABLE_SCALAR)
+#define RT_RUN_SCALAR 1
+#elif defined(RT_TABLE_NEON)
+#define RT_RUN_NEON 1
+#elif defined(RT_TABLE_SME)
+#define RT_RUN_SME 1
+#elif defined(RT_TABLE_SIMD)
+#define RT_RUN_SIMD 1
+#else
+#define RT_RUN_SCALAR 1
+#define RT_RUN_NEON 1
+#define RT_RUN_SME 1
+#define RT_RUN_SIMD 1
+#endif
+
 #if defined(__APPLE__)
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -303,10 +323,13 @@ typedef void *(*copy_fn)(void *, const void *, size_t);
 typedef void *(*set_fn)(void *, int, size_t);
 typedef int (*cmp_fn)(const void *, const void *, size_t);
 
-/* Darwin scalar memset row: on-disk __platform_memset, not live NEON memset. */
+/* Darwin scalar table. These are the on-disk integer leaves, not the live
+   NEON _platform_* bodies. memcmp and the string symbols are NEON even in
+   that dylib, so those rows keep the live entry. */
 static set_fn g_apple_scalar_memset;
+static copy_fn g_apple_scalar_memmove;
 
-static void bench_memcpy(struct row *r, copy_fn rt_fn)
+static void bench_memcpy(struct row *r, copy_fn libc_fn, copy_fn rt_fn)
 {
     enum { N = 4096, LOOPS = ITER_MEM };
     unsigned char *dst = g_a + PAD;
@@ -356,17 +379,19 @@ static void bench_memcpy(struct row *r, copy_fn rt_fn)
     for (i = 0; i < N; i++)
         src[i] = (unsigned char)(rnd() & 0xFFu);
 
+    if (!libc_fn)
+        libc_fn = memcpy;
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
         int si;
         for (k = 0; k < WARM; k++) {
-            memcpy(dst, src, N);
+            libc_fn(dst, src, N);
             rt_fn(dst, src, N);
         }
         for (si = 0; si < SAMPLES; si++) {
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                memcpy(dst, src, N);
+                libc_fn(dst, src, N);
             t1 = now_ns();
             lc[si] = t1 - t0;
             t0 = now_ns();
@@ -380,7 +405,7 @@ static void bench_memcpy(struct row *r, copy_fn rt_fn)
     }
 }
 
-static void bench_memmove(struct row *r, copy_fn rt_fn)
+static void bench_memmove(struct row *r, copy_fn libc_fn, copy_fn rt_fn)
 {
     enum { N = 2048, LOOPS = ITER_MEM };
     unsigned char *base = g_a + PAD;
@@ -466,17 +491,19 @@ static void bench_memmove(struct row *r, copy_fn rt_fn)
     for (i = 0; i < N + 64; i++)
         base[i] = (unsigned char)(rnd() & 0xFFu);
 
+    if (!libc_fn)
+        libc_fn = memmove;
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
         int si;
         for (k = 0; k < WARM; k++) {
-            memmove(base + 16, base, N);
+            libc_fn(base + 16, base, N);
             rt_fn(base + 16, base, N);
         }
         for (si = 0; si < SAMPLES; si++) {
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                memmove(base + 16, base, N);
+                libc_fn(base + 16, base, N);
             t1 = now_ns();
             lc[si] = t1 - t0;
             t0 = now_ns();
@@ -691,26 +718,36 @@ static void bench_memcmp(struct row *r, cmp_fn rt_fn)
     (void)sink;
 }
 
+__attribute__((unused))
 static void run_mem_backend(const char *backend, copy_fn cpy, copy_fn mv,
                             set_fn set, cmp_fn cmp)
 {
     struct row *r;
+    copy_fn libc_cpy = memcpy;
+    copy_fn libc_mv = memmove;
+    set_fn libc_set = memset;
+
+    /* Scalar Apple columns are the mapped integer leaves. Other backends
+       keep the live symbols. */
+    if (strcmp(backend, "scalar") == 0) {
+        if (g_apple_scalar_memmove) {
+            libc_cpy = g_apple_scalar_memmove;
+            libc_mv = g_apple_scalar_memmove;
+        }
+        if (g_apple_scalar_memset)
+            libc_set = g_apple_scalar_memset;
+    }
     if (cpy) {
         r = row_begin("memcpy", backend, GRP_MEMORY);
-        if (r) bench_memcpy(r, cpy);
+        if (r) bench_memcpy(r, libc_cpy, cpy);
     }
     if (mv) {
         r = row_begin("memmove", backend, GRP_MEMORY);
-        if (r) bench_memmove(r, mv);
+        if (r) bench_memmove(r, libc_mv, mv);
     }
     if (set) {
         r = row_begin("memset", backend, GRP_MEMORY);
-        if (r) {
-            set_fn libc_set = memset;
-            if (g_apple_scalar_memset && strcmp(backend, "scalar") == 0)
-                libc_set = g_apple_scalar_memset;
-            bench_memset(r, libc_set, set, 0);
-        }
+        if (r) bench_memset(r, libc_set, set, 0);
     }
     if (cmp) {
         r = row_begin("memcmp", backend, GRP_MEMORY);
@@ -746,38 +783,6 @@ static void strcmp_set(char *a, char *b, int n, int at, int fill, int av, int bv
         if (at == n)
             b[n + 1] = 0;
     }
-}
-
-static void time_strcmp(struct row *r, strcmp_fn fn, const char *a, const char *b)
-{
-    enum { LOOPS = ITER_STR };
-    uint64_t lc[SAMPLES], rt_t[SAMPLES];
-    uint64_t t0, t1;
-    volatile int sink = 0;
-    size_t k;
-    int si;
-
-    row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
-    row_add(r, sign_eq(fn(b, a), strcmp(b, a)));
-    for (k = 0; k < WARM; k++) {
-        sink += strcmp(a, b);
-        sink += fn(a, b);
-    }
-    for (si = 0; si < SAMPLES; si++) {
-        t0 = now_ns();
-        for (k = 0; k < LOOPS; k++)
-            sink += strcmp(a, b);
-        t1 = now_ns();
-        lc[si] = t1 - t0;
-        t0 = now_ns();
-        for (k = 0; k < LOOPS; k++)
-            sink += fn(a, b);
-        t1 = now_ns();
-        rt_t[si] = t1 - t0;
-    }
-    r->libc_ns = median_u64(lc, SAMPLES);
-    r->rt_ns = median_u64(rt_t, SAMPLES);
-    (void)sink;
 }
 
 static void bench_strlen_fn(struct row *r, strlen_fn fn)
@@ -967,68 +972,6 @@ static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
     (void)sink;
 }
 
-/* Same 1024-iteration clock as strcmp. These rows are the other exits:
-   immediate NUL, first byte, high half of the first chunk, equal scan to
-   NUL, prefix, bytes below 16, high unsigned bytes, and unaligned pointers. */
-static void bench_strcmp_more(const char *backend, strcmp_fn fn)
-{
-    static char a[512] __attribute__((aligned(64)));
-    static char b[512] __attribute__((aligned(64)));
-    static char raw[1280] __attribute__((aligned(64)));
-    struct row *r;
-
-    r = row_begin("strcmp_s0", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, b, 0, -1, -1, 0, 0);
-        time_strcmp(r, fn, a, b);
-    }
-    r = row_begin("strcmp_b0", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, b, 32, 0, -1, 'b', 'a');
-        time_strcmp(r, fn, a, b);
-    }
-    r = row_begin("strcmp_b16", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, b, 48, 16, -1, 'a', 'z');
-        time_strcmp(r, fn, a, b);
-    }
-    r = row_begin("strcmp_eq", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, b, 255, -1, -1, 0, 0);
-        time_strcmp(r, fn, a, b);
-    }
-    r = row_begin("strcmp_pref", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, b, 40, 40, -1, 0, 'z');
-        time_strcmp(r, fn, a, b);
-    }
-    r = row_begin("strcmp_lo", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, b, 64, 40, 1, 2, 9);
-        time_strcmp(r, fn, a, b);
-    }
-    r = row_begin("strcmp_hi", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, b, 64, 40, 0x80, 0x80, 0x7F);
-        time_strcmp(r, fn, a, b);
-    }
-    r = row_begin("strcmp_ua1", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(raw + 1, raw + 401, 255, 200, -1, 'a', 'z');
-        time_strcmp(r, fn, raw + 1, raw + 401);
-    }
-    r = row_begin("strcmp_ua8", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(raw + 8, raw + 408, 255, 200, -1, 'a', 'z');
-        time_strcmp(r, fn, raw + 8, raw + 408);
-    }
-    r = row_begin("strcmp_mix", backend, GRP_STRING);
-    if (r) {
-        strcmp_set(a, raw + 1, 255, 200, -1, 'a', 'z');
-        time_strcmp(r, fn, a, raw + 1);
-    }
-}
-
 static void bench_strchr_fn(struct row *r, strchr_fn fn)
 {
     enum { LOOPS = ITER_STR };
@@ -1149,14 +1092,17 @@ static void bench_strcpy(struct row *r)
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
         int si;
+        /* Counted copy of the same bytes strcpy writes. On Darwin this is
+           the on-disk integer memmove, not live NEON memcpy. */
+        copy_fn libc_fn = g_apple_scalar_memmove ? g_apple_scalar_memmove : memcpy;
         for (k = 0; k < WARM; k++) {
-            memcpy(da, src, ncopy);
+            libc_fn(da, src, ncopy);
             rt_strcpy(db, src);
         }
         for (si = 0; si < SAMPLES; si++) {
             t0 = now_ns();
             for (k = 0; k < LOOPS; k++)
-                memcpy(da, src, ncopy);
+                libc_fn(da, src, ncopy);
             t1 = now_ns();
             lc[si] = t1 - t0;
             t0 = now_ns();
@@ -1228,6 +1174,7 @@ static void bench_strstr(struct row *r)
     (void)sink;
 }
 
+__attribute__((unused))
 static void exercise_strings_misc(void)
 {
     struct row *r;
@@ -1312,6 +1259,7 @@ static void exercise_strings_misc(void)
     }
 }
 
+__attribute__((unused))
 static void run_strings(void)
 {
     struct row *r;
@@ -1321,7 +1269,6 @@ static void run_strings(void)
     if (r) bench_strcpy(r);
     r = row_begin("strcmp", "scalar", GRP_STRING);
     if (r) bench_strcmp_fn(r, rt_strcmp);
-    bench_strcmp_more("scalar", rt_strcmp);
     r = row_begin("strchr", "scalar", GRP_STRING);
     if (r) bench_strchr_fn(r, rt_strchr);
     r = row_begin("strstr", "scalar", GRP_STRING);
@@ -1329,7 +1276,7 @@ static void run_strings(void)
     exercise_strings_misc();
 }
 
-#if defined(__aarch64__) || defined(__arm64__)
+#if (defined(__aarch64__) || defined(__arm64__)) && defined(RT_RUN_NEON)
 static void run_strings_neon(void)
 {
     struct row *r;
@@ -1337,7 +1284,6 @@ static void run_strings_neon(void)
     if (r) bench_strlen_fn(r, rt_strlen_neon);
     r = row_begin("strcmp", "neon", GRP_STRING);
     if (r) bench_strcmp_fn(r, rt_strcmp_neon);
-    bench_strcmp_more("neon", rt_strcmp_neon);
     r = row_begin("strchr", "neon", GRP_STRING);
     if (r) bench_strchr_fn(r, rt_strchr_neon);
 }
@@ -1445,6 +1391,7 @@ static int f32_is(float x, const char *expect)
     return 1;
 }
 
+__attribute__((unused))
 static void run_numeric(void)
 {
     struct row *r;
@@ -1520,6 +1467,7 @@ static void run_numeric(void)
     (void)sink;
 }
 
+__attribute__((unused))
 static void run_sort(void)
 {
     struct row *r;
@@ -1589,6 +1537,7 @@ static void run_sort(void)
     }
 }
 
+__attribute__((unused))
 static void run_format(void)
 {
     struct row *r;
@@ -1686,6 +1635,7 @@ static void run_format(void)
     }
 }
 
+__attribute__((unused))
 static void run_alloc(void)
 {
     struct row *r = row_begin("alloc", "scalar", GRP_ALLOC);
@@ -1790,14 +1740,19 @@ static unsigned long long xcr0(void)
     __asm__ volatile("xgetbv" : "=a"(eax), "=d"(edx) : "c"(0));
     return ((unsigned long long)edx << 32) | eax;
 }
-static int have_avx2(void)
+static int have_avx(void)
 {
     unsigned eax, ebx, ecx, edx, max;
     __asm__ volatile("cpuid" : "=a"(max), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
     if (max < 1) return 0;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
     if ((ecx & (1u << 27)) == 0 || (ecx & (1u << 28)) == 0) return 0;
-    if ((xcr0() & 0x6ull) != 0x6ull) return 0;
+    return (xcr0() & 0x6ull) == 0x6ull;
+}
+static int have_avx2(void)
+{
+    unsigned eax, ebx, ecx, edx;
+    if (!have_avx()) return 0;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx & (1u << 5)) != 0;
 }
@@ -1811,7 +1766,7 @@ static int have_avx512(void)
 }
 #endif
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(RT_RUN_SCALAR)
 /* bl / blr / br / adrp. The scalar leaf has none of these. */
 static int insn_leaves(uint32_t w)
 {
@@ -1953,6 +1908,183 @@ static set_fn map_apple_scalar_memset(void)
     return (set_fn)(exec + (memset_vm - bzero_vm));
 }
 
+/* adr, and LDR (literal) of any width. A copied leaf cannot use them. */
+static int insn_pcrel_load(uint32_t w)
+{
+    uint32_t top;
+    if ((w & 0x9f000000u) == 0x10000000u)
+        return 1;
+    top = w >> 24;
+    return top == 0x18u || top == 0x58u || top == 0x98u ||
+           top == 0x1cu || top == 0x5cu || top == 0x9cu || top == 0xd8u;
+}
+
+/* b / b.cond / cbz / cbnz / tbz / tbnz. Returns the target VM address. */
+static int insn_branch_target(uint32_t w, uint64_t pc, uint64_t *tgt)
+{
+    int64_t imm;
+    if ((w & 0xfc000000u) == 0x14000000u) {
+        imm = (int64_t)((int32_t)(w << 6) >> 6);
+        *tgt = (uint64_t)((int64_t)pc + imm * 4);
+        return 1;
+    }
+    if ((w & 0xff000010u) == 0x54000000u || (w & 0x7e000000u) == 0x34000000u) {
+        imm = (int64_t)((w >> 5) & 0x7ffffu);
+        if (imm & 0x40000)
+            imm -= 0x80000;
+        *tgt = (uint64_t)((int64_t)pc + imm * 4);
+        return 1;
+    }
+    if ((w & 0x7e000000u) == 0x36000000u) {
+        imm = (int64_t)((w >> 5) & 0x3fffu);
+        if (imm & 0x2000)
+            imm -= 0x4000;
+        *tgt = (uint64_t)((int64_t)pc + imm * 4);
+        return 1;
+    }
+    return 0;
+}
+
+/* On-disk arm64 __platform_memmove through the next symbol. Integer
+   ldp/stp, no call and no PC-relative load. Live memcpy and memmove are
+   one NEON body; the scalar table times this leaf for both. */
+static copy_fn map_apple_scalar_memmove(void)
+{
+    int fd;
+    struct stat st;
+    unsigned char *file;
+    uint32_t mag;
+    uint32_t slice = 0, slice_sz = 0;
+    const unsigned char *base;
+    const struct mach_header_64 *mh;
+    uint32_t coff, c;
+    uint64_t text_vm = 0, text_file = 0, text_end = 0;
+    const struct symtab_command *sy = 0;
+    const struct nlist_64 *nl;
+    const char *strtab;
+    uint64_t mv_vm = 0, end_vm = 0;
+    const uint32_t *ins;
+    size_t nins, pagesz, mapn, i;
+    unsigned char *exec;
+
+    fd = open("/usr/lib/system/libsystem_platform.dylib", O_RDONLY);
+    if (fd < 0)
+        return 0;
+    if (fstat(fd, &st) != 0 || st.st_size < 64) {
+        close(fd);
+        return 0;
+    }
+    file = mmap(0, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    if (file == MAP_FAILED)
+        return 0;
+    memcpy(&mag, file, 4);
+    if (mag == FAT_CIGAM) {
+        uint32_t nfat = OSSwapBigToHostInt32(*(uint32_t *)(file + 4));
+        for (i = 0; i < nfat; i++) {
+            const unsigned char *a = file + 8 + i * 20;
+            uint32_t cputype = OSSwapBigToHostInt32(*(uint32_t *)a);
+            uint32_t subtype = OSSwapBigToHostInt32(*(uint32_t *)(a + 4));
+            uint32_t off = OSSwapBigToHostInt32(*(uint32_t *)(a + 8));
+            uint32_t sz = OSSwapBigToHostInt32(*(uint32_t *)(a + 12));
+            if (cputype == CPU_TYPE_ARM64 &&
+                (subtype & 0xffu) == CPU_SUBTYPE_ARM64_ALL) {
+                slice = off;
+                slice_sz = sz;
+                break;
+            }
+        }
+    } else if (mag == MH_MAGIC_64) {
+        slice = 0;
+        slice_sz = (uint32_t)st.st_size;
+    }
+    if (slice_sz < sizeof(struct mach_header_64) ||
+        (off_t)slice + (off_t)slice_sz > st.st_size) {
+        munmap(file, (size_t)st.st_size);
+        return 0;
+    }
+    base = file + slice;
+    mh = (const struct mach_header_64 *)base;
+    if (mh->magic != MH_MAGIC_64) {
+        munmap(file, (size_t)st.st_size);
+        return 0;
+    }
+    coff = 0;
+    for (c = 0; c < mh->ncmds; c++) {
+        const struct load_command *lc =
+            (const struct load_command *)(base + sizeof(*mh) + coff);
+        if (lc->cmdsize < 8 || coff + lc->cmdsize > mh->sizeofcmds)
+            break;
+        if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *sg =
+                (const struct segment_command_64 *)lc;
+            if (strcmp(sg->segname, "__TEXT") == 0) {
+                text_vm = sg->vmaddr;
+                text_file = sg->fileoff;
+                text_end = sg->vmaddr + sg->vmsize;
+            }
+        } else if (lc->cmd == LC_SYMTAB) {
+            sy = (const struct symtab_command *)lc;
+        }
+        coff += lc->cmdsize;
+    }
+    if (!sy || sy->nsyms == 0 || text_end <= text_vm) {
+        munmap(file, (size_t)st.st_size);
+        return 0;
+    }
+    nl = (const struct nlist_64 *)(base + sy->symoff);
+    strtab = (const char *)(base + sy->stroff);
+    for (i = 0; i < sy->nsyms; i++) {
+        const char *name = strtab + nl[i].n_un.n_strx;
+        if (strcmp(name, "__platform_memmove") == 0)
+            mv_vm = nl[i].n_value;
+    }
+    /* The next section symbol is the end of the leaf. */
+    end_vm = text_end;
+    if (mv_vm != 0) {
+        for (i = 0; i < sy->nsyms; i++) {
+            uint64_t val = nl[i].n_value;
+            if ((nl[i].n_type & N_TYPE) == N_SECT && val > mv_vm && val < end_vm)
+                end_vm = val;
+        }
+    }
+    if (mv_vm == 0 || end_vm <= mv_vm || (end_vm - mv_vm) > 4096u ||
+        ((end_vm - mv_vm) & 3u) != 0) {
+        munmap(file, (size_t)st.st_size);
+        return 0;
+    }
+    ins = (const uint32_t *)(base + text_file + (mv_vm - text_vm));
+    nins = (size_t)((end_vm - mv_vm) / 4u);
+    for (i = 0; i < nins; i++) {
+        uint64_t tgt = 0;
+        if (insn_leaves(ins[i]) || insn_pcrel_load(ins[i])) {
+            munmap(file, (size_t)st.st_size);
+            return 0;
+        }
+        if (insn_branch_target(ins[i], mv_vm + i * 4u, &tgt) &&
+            (tgt < mv_vm || tgt >= end_vm)) {
+            munmap(file, (size_t)st.st_size);
+            return 0;
+        }
+    }
+    pagesz = (size_t)sysconf(_SC_PAGESIZE);
+    mapn = (nins * 4u + pagesz - 1u) & ~(pagesz - 1u);
+    exec = mmap(0, mapn, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (exec == MAP_FAILED) {
+        munmap(file, (size_t)st.st_size);
+        return 0;
+    }
+    memcpy(exec, ins, nins * 4u);
+    if (mprotect(exec, mapn, PROT_READ | PROT_EXEC) != 0) {
+        munmap(exec, mapn);
+        munmap(file, (size_t)st.st_size);
+        return 0;
+    }
+    sys_icache_invalidate(exec, nins * 4u);
+    munmap(file, (size_t)st.st_size);
+    return (copy_fn)exec;
+}
+
 /* The 4096-byte oracle row never reaches the dc zva branch (n >= 32 KiB
    and a zero fill). This gate does. */
 static int apple_scalar_blob_ok(set_fn fn)
@@ -1987,11 +2119,97 @@ static int apple_scalar_blob_ok(set_fn fn)
     return 1;
 }
 
-extern void *rt_sme_call(void *dst, int c, size_t n, void *fn);
-static void *(*g_apple_sme)(void *, int, size_t);
+/* Mapped memmove must match live memmove, including the timed shapes:
+   a 4096-byte non-overlapping copy and memmove(p+16, p, 2048). */
+static int apple_scalar_copy_ok(copy_fn fn)
+{
+    enum { CAP = 65536 + 256 };
+    static unsigned char raw_s[CAP], raw_e[CAP], raw_g[CAP];
+    unsigned char *src = (unsigned char *)(((uintptr_t)raw_s + 63u) & ~(uintptr_t)63u);
+    unsigned char *exp = (unsigned char *)(((uintptr_t)raw_e + 63u) & ~(uintptr_t)63u);
+    unsigned char *got = (unsigned char *)(((uintptr_t)raw_g + 63u) & ~(uintptr_t)63u);
+    size_t room = (size_t)((raw_s + CAP) - src);
+    size_t lens[] = {
+        0, 1, 7, 8, 15, 16, 31, 63, 64, 65, 127, 128, 255, 2048, 4096, 65536
+    };
+    size_t aligns[] = { 0, 1, 7, 15, 63 };
+    size_t offs[] = { 0, 1, 2, 3, 7, 8, 15, 16, 31, 64 };
+    size_t li, ai, oi, i;
+
+    if ((size_t)((raw_e + CAP) - exp) < room)
+        room = (size_t)((raw_e + CAP) - exp);
+    if ((size_t)((raw_g + CAP) - got) < room)
+        room = (size_t)((raw_g + CAP) - got);
+
+    for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+        for (ai = 0; ai < sizeof aligns / sizeof aligns[0]; ai++) {
+            size_t n = lens[li], off = aligns[ai];
+            void *ret;
+            if (off + n + 32 > room)
+                continue;
+            memset(src, 0x3C, room);
+            memset(exp, 0x5A, room);
+            memset(got, 0x5A, room);
+            for (i = 0; i < n; i++)
+                src[off + i] = (unsigned char)(0x11 + (unsigned)(i * 17u));
+            memmove(exp + off, src + off, n);
+            ret = fn(got + off, src + off, n);
+            if (ret != got + off || memcmp(got, exp, room) != 0)
+                return 0;
+        }
+    }
+    for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+        for (oi = 0; oi < sizeof offs / sizeof offs[0]; oi++) {
+            size_t n = lens[li], off = offs[oi];
+            int above;
+            if (n + off + 32 > room)
+                continue;
+            for (above = 0; above < 2; above++) {
+                void *ret;
+                unsigned char *ds, *dd;
+                memset(src, 0x3C, room);
+                for (i = 0; i < n + off; i++)
+                    src[i] = (unsigned char)(0x40 + (unsigned)((i * 3u) & 0xFFu));
+                memcpy(exp, src, room);
+                if (above) {
+                    dd = src + off;
+                    ds = src;
+                } else {
+                    dd = src;
+                    ds = src + off;
+                }
+                memmove(exp + (dd - src), exp + (ds - src), n);
+                ret = fn(dd, ds, n);
+                if (ret != dd || memcmp(src, exp, room) != 0)
+                    return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+#endif
+
+#if defined(__APPLE__) && defined(RT_RUN_SME)
+/* x1 is pointer-sized. memset passes the fill in the low byte. */
+extern void *rt_sme_call(void *a, uintptr_t b, size_t n, void *fn);
+static void *(*g_apple_sme_memset)(void *, int, size_t);
+static void *(*g_apple_sme_memcpy)(void *, const void *, size_t);
+static void *(*g_apple_sme_memmove)(void *, const void *, size_t);
+
 static void *apple_sme_memset(void *dst, int c, size_t n)
 {
-    return rt_sme_call(dst, c, n, (void *)g_apple_sme);
+    return rt_sme_call(dst, (uintptr_t)(unsigned)c, n, (void *)g_apple_sme_memset);
+}
+
+static void *apple_sme_memcpy(void *dst, const void *src, size_t n)
+{
+    return rt_sme_call(dst, (uintptr_t)src, n, (void *)g_apple_sme_memcpy);
+}
+
+static void *apple_sme_memmove(void *dst, const void *src, size_t n)
+{
+    return rt_sme_call(dst, (uintptr_t)src, n, (void *)g_apple_sme_memmove);
 }
 #endif
 
@@ -2010,8 +2228,23 @@ int main(void)
             g_color = 0;
     }
 
-    printf("%srt host oracle%s — libc vs rt · separate table per accessible backend\n",
+    printf("%srt host oracle%s — libc vs rt · one table per binary\n",
            g_color ? C_BOLD : "", g_color ? C_RESET : "");
+#if defined(RT_TABLE_SCALAR)
+    printf("binary: scalar  ·  vectorize: %s\n",
+#if defined(RT_VECTORIZE)
+           "on"
+#else
+           "off"
+#endif
+           );
+#elif defined(RT_TABLE_NEON)
+    printf("binary: neon\n");
+#elif defined(RT_TABLE_SME)
+    printf("binary: sme\n");
+#elif defined(RT_TABLE_SIMD)
+    printf("binary: simd\n");
+#endif
 
 #if defined(__i386__) && !defined(__x86_64__)
     printf("host: i386");
@@ -2022,29 +2255,43 @@ int main(void)
     printf("\n");
 #elif defined(__x86_64__)
     printf("host: x86_64  ·  backends: scalar sse2");
+    if (have_avx()) printf(" avx");
     if (have_avx2()) printf(" avx2");
     if (have_avx512()) printf(" avx512");
     printf("\n");
 #elif defined(__aarch64__) || defined(__arm64__)
-    printf("host: ARM64  ·  backends: scalar neon");
+    printf("host: ARM64");
+#if !defined(RT_TABLE_SCALAR) && !defined(RT_TABLE_NEON) && !defined(RT_TABLE_SME)
+    printf("  ·  backends: scalar neon");
 #if defined(__APPLE__)
     printf(" sme");
 #endif
-    printf("  ·  SVE: not available on Apple Silicon (skipped)\n");
+    printf("  ·  SVE: not available on Apple Silicon (skipped)");
+#endif
+    printf("\n");
 #else
     printf("host: unknown  ·  backends: scalar\n");
 #endif
 
-    /* ---- always: portable scalar plane ---- */
-#if defined(__APPLE__)
+#if defined(__APPLE__) && defined(RT_RUN_SCALAR)
     g_apple_scalar_memset = map_apple_scalar_memset();
-    g_apple_sme = dlsym(RTLD_DEFAULT, "__sme_memset");
+    g_apple_scalar_memmove = map_apple_scalar_memmove();
     if (!g_apple_scalar_memset || !apple_scalar_blob_ok(g_apple_scalar_memset) ||
-        !g_apple_sme) {
-        fprintf(stderr, "apple memset bodies not mapped\n");
+        !g_apple_scalar_memmove || !apple_scalar_copy_ok(g_apple_scalar_memmove)) {
+        fprintf(stderr, "apple scalar bodies not mapped\n");
         return 1;
     }
 #endif
+#if defined(__APPLE__) && defined(RT_RUN_SME)
+    g_apple_sme_memset = dlsym(RTLD_DEFAULT, "__sme_memset");
+    g_apple_sme_memcpy = dlsym(RTLD_DEFAULT, "__sme_memcpy");
+    g_apple_sme_memmove = dlsym(RTLD_DEFAULT, "__sme_memmove");
+    if (!g_apple_sme_memset || !g_apple_sme_memcpy || !g_apple_sme_memmove) {
+        fprintf(stderr, "apple sme memory not mapped\n");
+        return 1;
+    }
+#endif
+#if defined(RT_RUN_SCALAR)
     run_mem_backend("scalar", rt_memcpy_scalar, rt_memmove_scalar,
                     rt_memset_scalar, rt_memcmp_scalar);
     run_strings();
@@ -2052,31 +2299,51 @@ int main(void)
     run_sort();
     run_format();
     run_alloc();
+#endif
 
 #if defined(__i386__) && !defined(__x86_64__)
+#if defined(RT_RUN_SIMD)
     /* Pentium-era ladder: 386 REP → MMX → SSE (P3) */
     run_mem_backend("i386", rt_memcpy_i386, 0, rt_memset_i386, rt_memcmp_i386);
     if (have_mmx())
         run_mem_backend("mmx", rt_memcpy_mmx, 0, rt_memset_mmx, rt_memcmp_mmx);
     if (have_sse())
         run_mem_backend("sse", rt_memcpy_sse, 0, rt_memset_sse, rt_memcmp_sse);
+#endif
 #elif defined(__x86_64__)
+#if defined(RT_RUN_SIMD)
     run_mem_backend("sse2", rt_memcpy_sse2, 0, rt_memset_sse2, rt_memcmp_sse2);
+    if (have_avx())
+        run_mem_backend("avx", rt_memcpy_avx, 0, rt_memset_avx, rt_memcmp_avx);
     if (have_avx2())
         run_mem_backend("avx2", rt_memcpy_avx2, 0, rt_memset_avx2, rt_memcmp_avx2);
     if (have_avx512())
         run_mem_backend("avx512", rt_memcpy_avx512, 0, rt_memset_avx512, rt_memcmp_avx512);
+#endif
 #elif defined(__aarch64__) || defined(__arm64__)
-#if defined(__aarch64__) || defined(__arm64__)
+#if defined(RT_RUN_NEON)
     run_mem_backend("neon", rt_memcpy_neon, 0, rt_memset_neon, rt_memcmp_neon);
     run_strings_neon();
-#if defined(__APPLE__)
-    /* memcpy_sme and memcmp_sme are declared and have no body, so no row. */
+#endif
+#if defined(__APPLE__) && defined(RT_RUN_SME)
+    /* memcpy, memmove, and memset time __sme_* through rt_sme_call.
+       Apple publishes no __sme_memcmp, so that row is live memcmp. */
+    {
+        struct row *nr = row_begin("memcpy", "sme", GRP_MEMORY);
+        if (nr) bench_memcpy(nr, apple_sme_memcpy, rt_memcpy_sme);
+    }
+    {
+        struct row *nr = row_begin("memmove", "sme", GRP_MEMORY);
+        if (nr) bench_memmove(nr, apple_sme_memmove, rt_memmove_sme);
+    }
     {
         struct row *nr = row_begin("memset", "sme", GRP_MEMORY);
         if (nr) bench_memset(nr, apple_sme_memset, rt_memset_sme, 1);
     }
-#endif
+    {
+        struct row *nr = row_begin("memcmp", "sme", GRP_MEMORY);
+        if (nr) bench_memcmp(nr, rt_memcmp_sme);
+    }
 #endif
 #endif
 

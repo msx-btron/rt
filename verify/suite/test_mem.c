@@ -6,7 +6,7 @@
    does not write; the magnitude is not part of the contract.
    libc is the reference for the bytes and the sign. A length that does not
    fit in the buffer fails the run. It is not a skipped success.
-   x86-64: scalar + sse2/avx2/avx512. i386: scalar + rep/mmx/pc98.
+   x86-64: scalar + sse2/avx/avx2/avx512. i386: scalar + rep/mmx/pc98.
    macOS arm64 (M4): scalar + NEON. memmove is scalar on every architecture.
 */
 #include "rt/mem.h"
@@ -368,19 +368,24 @@ static unsigned long long xcr0(void)
     return ((unsigned long long)edx << 32) | eax;
 }
 
-static int have_avx2(void)
+static int have_avx(void)
 {
-    unsigned eax, ebx, ecx, edx, max, max7;
+    unsigned eax, ebx, ecx, edx, max;
     __asm__ volatile("cpuid" : "=a"(max), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0));
     if (max < 1)
         return 0;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1));
     if ((ecx & (1u << 27)) == 0 || (ecx & (1u << 28)) == 0)
         return 0;
-    if ((xcr0() & 0x6ull) != 0x6ull)
+    return (xcr0() & 0x6ull) == 0x6ull;
+}
+
+static int have_avx2(void)
+{
+    unsigned eax, ebx, ecx, edx;
+    if (!have_avx())
         return 0;
-    __asm__ volatile("cpuid" : "=a"(max7), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
-    (void)max7;
+    __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx & (1u << 5)) != 0;
 }
 
@@ -415,6 +420,10 @@ int main(void)
 #elif defined(__x86_64__)
     exercise("scalar", rt_memcpy_scalar, rt_memset_scalar, rt_memcmp_scalar);
     exercise("sse2", rt_memcpy_sse2, rt_memset_sse2, rt_memcmp_sse2);
+    if (have_avx())
+        exercise("avx", rt_memcpy_avx, rt_memset_avx, rt_memcmp_avx);
+    else
+        printf("skip avx\n");
     if (have_avx2())
         exercise("avx2", rt_memcpy_avx2, rt_memset_avx2, rt_memcmp_avx2);
     else
