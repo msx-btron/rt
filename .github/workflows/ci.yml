@@ -227,20 +227,24 @@ jobs:
   verify:
     name: Coq verify
     runs-on: ubuntu-24.04
-    container:
-      image: rocq/rocq-prover:9.2
     steps:
-      - name: Prerequisite — git, make, Rocq 9.2
+      - uses: actions/checkout@v4
+      - name: Prerequisite — Rocq 9.2
         run: |
           set -eux
-          if ! command -v git >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git make
-          fi
-          opam exec -- coqc -v
-      - uses: actions/checkout@v4
+          docker pull rocq/rocq-prover:9.2
+          # The image entrypoint is `opam exec --`. A job container drops it,
+          # and the runner user has no opam root.
+          docker run --rm rocq/rocq-prover:9.2 coqc -v
       - name: make verify
-        run: opam exec -- make verify
+        run: |
+          set -eux
+          chmod -R a+rwX "$GITHUB_WORKSPACE"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE":/work \
+            -w /work \
+            rocq/rocq-prover:9.2 \
+            make verify
 
   # ------------------------------------------------------------------
   # Matrix summary job (always runs)
