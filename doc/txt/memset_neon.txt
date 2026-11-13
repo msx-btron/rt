@@ -1,0 +1,388 @@
+memset on Apple M4: _platform_memset and rt_memset_neon
+2026-11-13
+
+The host oracle prints one time for both memset routines on its
+published row. This note counts the bytes, walks the instructions
+those bytes execute, and measures the cycles on that row. The row is
+4096 bytes, the destination 64-byte aligned, the fill 0xA5.
+
+
+1. Question
+
+  Two routines write the same bytes with the same store width. The
+  oracle's clock cannot separate them. The question is whether that
+  is one loop issued twice, or two loops that happen to take the same
+  number of cycles.
+
+  The comparison is the cacheable path of Apple's routine against
+  .Lms_64 in rt_memset_neon. Other lengths are counted in the
+  instruction trace and were not put on the cycle counter.
+
+
+2. Which bytes run
+
+  A call to memset in this process binds one symbol.
+  dlsym("memset") and dlsym("_platform_memset") returned the same
+  address in libsystem_platform.dylib, in the dyld shared cache.
+  The report uses offsets from that symbol. The load address moves
+  with the cache slide.
+
+  The file /usr/lib/system/libsystem_platform.dylib on disk is a
+  different routine. Its splat is the same multiply, and then it
+  stores with four scalar stp x1, x1 per 64 bytes. It has no dup and
+  no Q register. otool of that file does not describe the process.
+  ___sme_memset is a third body, in the same file, and it is not the
+  symbol memset resolves to.
+
+  rt_memset_neon is the Mach-O text produced by
+
+    cc -c src/aarch64/neon/mem.S
+
+  with Apple clang 21.0.0. The symbol in the object is
+  _rt_memset_neon. The source is src/aarch64/neon/mem.S.
+
+
+3. Machine
+
+  Apple M4, model Mac16,12. Four performance cores share a 16 MiB L2.
+  Each has a 128 KiB L1 data cache and a 192 KiB L1 instruction cache.
+  The cache line is 128 bytes. Six efficiency cores are present and
+  were not the target of the cycle run.
+
+  The cycle run asked for QOS_CLASS_USER_INTERACTIVE. The calibration
+  below came out at 4.36 GHz, which is a performance core at boost.
+  The 4096-byte buffer fits in the 128 KiB L1 many times. The loop
+  repeats it, so the lines are hot. This is an L1 store stream.
+
+
+4. Method
+
+  Code size is the span of the instructions. For Apple that is the
+  shared-cache symbol, from the first and through the ret of the byte
+  tail. For rt it is the assembled object, from _rt_memset_neon
+  through the last branch, plus the padding the next symbol's
+  alignment leaves behind.
+
+  The instruction trace is a walk of that encoding. A branch that is
+  not taken still counts. A nop that the program counter falls into
+  counts. A store counts as one instruction whatever its width.
+  Nothing in this walk was taken from a performance counter.
+
+  Cycles come from CNTPCT_EL0. CNTFRQ_EL0 read as 1000000000, so one
+  tick of that counter is one nanosecond. The Mach timebase
+  (hw.tbfrequency) is 24000000 and was not used. PMCCNTR_EL0 traps
+  with SIGILL from this process, so there is no direct core-cycle
+  register in the result.
+
+  The conversion from nanoseconds to cycles assumes that a dependent
+
+    add  x0, x0, #1
+
+  has latency 1 on this core. Each calibration ran 200000 trips of
+  256 such adds, subtracted an empty twin of the same trip count, and
+  was repeated on both sides of the memset loops. The implied clock
+  is the check on the assumption: the median is 4363129645 Hz.
+
+  Each memset sample is 400000 calls of the 4096-byte fill, minus the
+  same trip count through an empty function of the same type. The
+  empty call costs about one cycle, which is smaller than the spread
+  between rounds. Eleven rounds. The reported cycle count is the
+  median. The buffer is 64-byte aligned. The fill is 0xA5, so the
+  zero path does not run.
+
+
+5. Control
+
+  Both routines broadcast one byte into a 16-byte register and then
+  store that register. The broadcast is different, and so is the
+  register that walks the buffer.
+
+  Apple keeps the caller's pointer in x0 and walks x3:
+
+    and     x1, x1, #0xff
+    mov     x3, #0x0101010101010101
+    mul     x1, x1, x3
+    dup.2d  v0, x1
+    mov     x3, x0
+
+  rt saves the pointer in x8, builds the broadcast with shifts, and
+  walks x0. The epilogue copies x8 back to x0:
+
+    mov     x8, x0
+    and     w1, w1, #0xff
+    orr     w1, w1, w1, lsl #8
+    orr     w1, w1, w1, lsl #16
+    orr     x3, x1, x1, lsl #32
+    dup     v0.2d, x3
+
+  Apple then splits on two thresholds. Below 64 bytes it stores 8-byte
+  words and then bytes. From 64 bytes up to, and not including,
+  32768 it takes the cacheable stp path. At 32768 and above a nonzero
+  fill takes the same shape with stnp. A zero fill of that size
+  branches to __bzero.
+
+  rt splits at 16 and at 64. Below 16 it tests bits 3, 2, 1, and 0
+  and stores 8, 4, 2, and 1. From 16 to 63 it stores with str q0.
+  At 64 and above it stays on stp q0, q0 for every length and every
+  fill, then finishes a remainder with the 16-byte loop and a scalar
+  tail.
+
+
+6. Size
+
+  Apple _platform_memset is 212 bytes, 53 instructions, and contains
+  no padding. The pieces, as offsets from the symbol:
+
+    0 .. 39      prologue, both length tests     40 bytes
+    40 .. 107    stnp path, n >= 32768, nonzero   68 bytes
+    108 .. 175   stp path, 64 <= n < 32768        68 bytes
+    176 .. 211   word and byte tail, n < 64       36 bytes
+
+  The cacheable loop is the five instructions at offset 140. It is
+  20 bytes and is not aligned to 16:
+
+    stp     q0, q0, [x3]
+    stp     q0, q0, [x3, #0x20]
+    add     x3, x3, #0x40
+    subs    x2, x2, #0x40
+    b.hi    loop
+
+  __bzero sits immediately in front of this symbol and is 96 bytes.
+  Lengths below 32768 branch into the memset paths above. Its own
+  large loop is at __bzero+64:
+
+    dc      zva, x3
+    add     x3, x3, #0x40
+    subs    x2, x2, #0x40
+    b.hi    loop
+
+  The step is 64 bytes. This report did not read DCZID_EL0.
+
+  rt_memset_neon occupies 216 bytes, 54 instructions, from the mov
+  through the final branch. Two of those instructions are nop. They
+  are the .p2align 4 in front of .Lms_64: the compare-and-branch
+  ends 8 bytes short of a 16-byte boundary, and the assembler fills
+  the hole. A length of 64 or more does not take the branch, so the
+  program counter falls through both nops on the way into the loop.
+  A shorter length branches around them. Eight further bytes of nop
+  sit after the function so that _rt_memcmp_neon is 16-byte aligned.
+  Those two are past an unconditional branch and do not execute.
+  The symbol-to-symbol span is 224 bytes.
+
+  The rt loop is 24 bytes, six instructions, and is 16-byte aligned:
+
+    stp     q0, q0, [x0]
+    stp     q0, q0, [x0, #32]
+    add     x0, x0, #64
+    sub     x2, x2, #64
+    cmp     x2, #64
+    b.hs    .Lms_64
+
+  Apple's subs writes the flags that b.hi reads. rt subtracts, then
+  compares, then branches on b.hs. The store pair is the same
+  instruction: two Q registers, 32 bytes, issued twice per 64 bytes.
+
+
+7. The aligned 4096-byte trace
+
+  Destination aligned to 64, n = 4096, fill nonzero. Both sides issue
+  128 stp-q instructions. That is 64 pairs, 32 bytes each, 4096 bytes,
+  and each byte is stored once.
+
+  Apple enters the cacheable path at offset 108.
+
+    9    instructions through the taken branch to that path
+    8    head: the first stp pair, the align step, the subs, the
+         branch that does not leave early
+    310  the five-instruction loop, 62 times
+    4    the closing add, the last stp pair, and ret
+
+  The head pair covers dst+0 through dst+63. The walker is then
+  dst+64, which is already a multiple of 64, so the align step
+  changes nothing. The loop stores at dst+64, dst+128, and so on
+  through dst+3968. The closing pair is at dst+4032 and covers the
+  buffer through dst+4095. The total is 331 instructions.
+
+  rt falls into .Lms_64.
+
+    12   instructions through the two nops
+    384  the six-instruction loop, 64 times
+    3    cbz of a zero remainder, the restore of x0, and ret
+
+  The stores sit at dst+0, dst+64, and so on through dst+4032. The
+  total is 399 instructions.
+
+  The 68-instruction gap is all bookkeeping. The store count matches.
+  Sixty-four of the extra instructions are the cmp that Apple folds
+  into subs. Two are the alignment nops. rt also runs the add, the
+  subtract, and the branch 64 times where Apple runs that trio 62
+  times, which is six instructions, and Apple spends six instructions
+  aligning the walker before the loop, so those cancel. The last two
+  are one extra instruction in the broadcast and the cbz in front of
+  rt's return.
+
+
+8. Other lengths
+
+  These are the same kind of walk. They are not cycle measurements.
+  "stp" is the number of 32-byte store instructions, including stnp.
+  The 32768 row is a nonzero fill. A zero fill of that length leaves
+  for __bzero; that walk is under the table.
+
+    n      Apple   stp   rt    stp   path on Apple
+    0        12      0   14      0   8-byte, then bytes
+    1        15      0   16      0   8-byte, then bytes
+    8        15      0   16      0   8-byte, then bytes
+    15       36      0   22      0   8-byte, then bytes
+    16       18      0   17      0   8-byte, then bytes
+    32       24      0   21      0   8-byte, then bytes
+    63       54      0   39      0   8-byte, then bytes
+    64       21      4   21      2   stp, head overlaps tail
+    65       21      4   31      2   stp, head overlaps tail
+    80       21      4   28      2   stp, head overlaps tail
+    127      21      4   50      2   stp, head overlaps tail
+    128      21      4   27      4   stp, head then tail
+    4096    331    128  399    128   stp
+    32768  2572   1024 3087   1024   stnp, fill nonzero
+
+  The rt column for n >= 64 includes the two nops. Below 64 the
+  branch around them is taken, and they are absent from that count.
+
+  For an aligned n of 64, 65, 80, or 127, Apple's loop body does not
+  run. The head pair and the closing pair overlap, so the same bytes
+  are stored twice and the instruction count stays at 21. rt stores
+  the first 64 bytes once and finishes the remainder in the 16-byte
+  loop and the scalar tail, which is why 127 costs rt 50 instructions
+  against Apple's 21.
+
+  An unaligned destination changes Apple's store count and does not
+  change rt's. With dst mod 64 = 8 and n = 4096, the Apple walk is
+  336 instructions and 130 stp-q instructions: the aligned walker and
+  the closing pair overlap. rt is still 399 instructions and 128
+  stp-q instructions, issued at the caller's alignment.
+
+  A zero fill of 32768 leaves Apple's memset after 10 instructions
+  and enters __bzero at its large path. The walk from that point,
+  for an aligned length, is 2062 instructions in all, of which 510
+  are dc zva. Four stnp-q instructions cover the first 64 bytes and
+  the last 64. The middle is one zva per 64 bytes. rt has no such
+  split. A zero fill of 32768 is the same 3087-instruction stp trace
+  as any other fill of that length.
+
+
+9. Cycles
+
+  Eleven rounds, performance core, aligned 4096, fill 0xA5. Cycles
+  are per call, empty call removed. The clock is the median of the
+  two add-chain samples that bracket the round.
+
+    round     Hz           Apple    rt
+    0         4363129645    145     134
+    1         4380701810    128     127
+    2         4364955646    127     128
+    3         4354437984    194     132
+    4         4375316345    128     150
+    5         4350730391    133     143
+    6         4350242067    129     127
+    7         4373984564    151     142
+    8         4346406565    131     128
+    9         4353825537    133     133
+    10        4368818377    137     128
+
+    median    4363129645    133     132
+    min                     127     127
+    max                     194     150
+
+  The medians differ by one cycle. The rounds move by more than that.
+  Sorted, Apple is 127, 128, 128, 129, 131, 133, 133, 137, 145, 151,
+  194. rt is 127, 127, 128, 128, 128, 132, 133, 134, 142, 143, 150.
+  Round 3 is the outlier, on the Apple side.
+
+  At the median clock, 133 cycles is 30.5 ns and 132 cycles is 30.3 ns.
+  Across 4096 bytes that is 30.8 bytes per cycle and 31.0 bytes per
+  cycle.
+
+  Both traces contain 128 stores of 32 bytes. One such store per
+  cycle is 128 cycles. The medians sit 5 and 4 cycles above that
+  floor. Those cycles cover the broadcast, the length tests, and the
+  return. In the steady loop each side issues two stores per 64
+  bytes, so the loop itself is 2 cycles per 64 bytes on this
+  measurement. Apple retires 5 instructions in those 2 cycles. rt
+  retires 6, and once per call it has also retired the two nops.
+  The extra arithmetic does not add a cycle while the stores are the
+  thing the core is waiting on.
+
+  The ratio of the medians, Apple over rt, is 133/132 = 1.008. The
+  project's published win is an unrounded coefficient of at least
+  1.05. This gap is inside the round noise and under that line.
+
+
+10. The host oracle
+
+  verify/suite/test_host.c times this same point and no other memset
+  shape. The buffer is g_a+PAD with both the array and PAD equal to
+  64, so the pointer is 64-byte aligned. The body is 256 calls, a
+  warmup of 16, and the median of 21 samples. The clock is
+  CLOCK_MONOTONIC. On this Mac those samples fall on a 1000 ns grid.
+
+  256 calls at 30.5 ns is 7.8 µs. The grid can print that as 7000 ns
+  or as 8000 ns. One grid step over 256 calls is 3.9 ns per call,
+  about 17 cycles at 4.36 GHz. A one-cycle gap between the kernels is
+  a few tens of nanoseconds across the whole sample. The oracle's
+  equality is the 1000 ns grid applied to two loops that already
+  share a store rate. The correctness sweep in the same function
+  walks other lengths, fills, and alignments, and it does not time
+  them.
+
+
+11. Paths this measurement leaves alone
+
+  The cycle number is one point. The instruction walk shows where a
+  second point would be measuring a different machine.
+
+  Below 64 bytes Apple uses scalar stores and rt uses the bit tests
+  or str q0. From 64 to 127 Apple overlaps a head pair with a tail
+  pair, and rt uses one stp pair plus a short tail. An odd address
+  makes Apple store 64-byte-aligned blocks and overlap the ends; rt
+  stores at the address it was given. At 32768 bytes a nonzero Apple
+  fill becomes stnp, and a zero fill becomes dc zva. rt remains the
+  stp loop.
+
+  None of those points was placed on the cycle counter for this note.
+  A coefficient taken from the aligned 4096-byte row does not speak
+  for them.
+
+
+12. Proof
+
+  verify/models/MemsetNeon.v is an instruction-accurate model of the
+  rt text, and of that text only. rt_memset_neon_any quantifies every
+  fill byte below 256 and every length below 2^64. The Apple routine
+  is not in the model. The two nops, the six-instruction loop, and
+  the scalar tail are part of the bytes the proof follows. Replacing
+  the loop with Apple's subs form, or with the DC ZVA path, would be
+  a different program and a different proof. This measurement does
+  not ask for that replacement: on the row the oracle publishes, the
+  two programs already take the same number of cycles.
+
+
+13. Reproduction
+
+  Size and the Apple offsets: stop a process in main and disassemble
+  the address dlsym returns for _platform_memset, and the 96 bytes
+  in front of it for __bzero. Refuse the on-disk dylib.
+
+  Size of rt: assemble src/aarch64/neon/mem.S and disassemble
+  _rt_memset_neon. The loop label is 16-byte aligned. The two nops
+  in front of it are in the fall-through from the n>=64 test.
+
+  The instruction tables are the walk in sections 7 and 8. A taken
+  and an untaken branch both count. The 4096-byte Apple walk is
+  62 trips of the loop because the head and the tail each cover 64
+  bytes. The rt walk is 64 trips because nothing is lifted out.
+
+  Cycles: pin a performance core, time CNTPCT_EL0 around a dependent
+  add chain and around 400000 calls, subtract an empty call, convert
+  with CNTFRQ_EL0 and a one-cycle add. Report the median of several
+  rounds. One round is not the result. The spread in section 9 is
+  part of the result.
