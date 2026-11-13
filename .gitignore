@@ -6,3 +6,4 @@ verify/build
 *.glob
 *.vo.aux
 *.aux
+.lia.cache

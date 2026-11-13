@@ -221,6 +221,28 @@ jobs:
         run: make security
 
   # ------------------------------------------------------------------
+  # Coq check. Ubuntu 24.04's apt package coq is 8.18 and has no
+  # `From Stdlib`. The image is Rocq 9.2, the same line as local coqc.
+  # ------------------------------------------------------------------
+  verify:
+    name: Coq verify
+    runs-on: ubuntu-24.04
+    container:
+      image: rocq/rocq-prover:9.2
+    steps:
+      - name: Prerequisite — git, make, Rocq 9.2
+        run: |
+          set -eux
+          if ! command -v git >/dev/null 2>&1 || ! command -v make >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git make
+          fi
+          opam exec -- coqc -v
+      - uses: actions/checkout@v4
+      - name: make verify
+        run: opam exec -- make verify
+
+  # ------------------------------------------------------------------
   # Matrix summary job (always runs)
   # ------------------------------------------------------------------
   summary:
@@ -234,6 +256,7 @@ jobs:
       - riscv64-rvv
       - riscv32-rvv
       - sqcsa
+      - verify
     if: always()
     steps:
       - name: Results
@@ -245,6 +268,7 @@ jobs:
           echo "riscv64-rvv:        ${{ needs.riscv64-rvv.result }}"
           echo "riscv32-rvv:        ${{ needs.riscv32-rvv.result }}"
           echo "sqcsa:              ${{ needs.sqcsa.result }}"
+          echo "verify:             ${{ needs.verify.result }}"
           # Fail the workflow if any required job failed
           for r in \
             "${{ needs.x86_64-native.result }}" \
@@ -253,7 +277,8 @@ jobs:
             "${{ needs.aarch64-sve.result }}" \
             "${{ needs.riscv64-rvv.result }}" \
             "${{ needs.riscv32-rvv.result }}" \
-            "${{ needs.sqcsa.result }}"
+            "${{ needs.sqcsa.result }}" \
+            "${{ needs.verify.result }}"
           do
             case "$r" in failure|cancelled) exit 1 ;; esac
           done

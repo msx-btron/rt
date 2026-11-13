@@ -34,7 +34,7 @@ static void put_str(char *buf, size_t cap, size_t *pos, const char *s, size_t ma
 {
     size_t i = 0;
     if (!s) s = "(null)";
-    while (s[i] && i < max) {
+    while (i < max && s[i]) {
         put_ch(buf, cap, pos, s[i]);
         i++;
     }

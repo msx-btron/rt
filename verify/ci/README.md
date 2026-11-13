@@ -12,6 +12,7 @@ GitHub Actions workflow: `.github/workflows/ci.yml`
 | `riscv64-rvv` | RVV64 | assemble + `qemu-riscv64 -cpu rv64,v=true` |
 | `riscv32-rvv` | RVV32 | assemble |
 | `sqcsa` | scalar C + host oracle | SQCSA Test Suite: `make security` |
+| `verify` | `rt_memset_neon` | Coq verify: Rocq 9.2, then `make verify` |
 
 Local equivalents:
 
@@ -21,6 +22,9 @@ make
 
 # static analysis (scalar C and the host oracle; not the asm backends)
 make security
+
+# Rocq 9.2. Ubuntu's apt coq is 8.18 and cannot check this file.
+make verify
 
 # i386
 sh verify/qemu.sh all          # Linux x86_64 + multilib

@@ -220,13 +220,13 @@
       <div class="band-head">
         <span class="band-index">03 / Today</span>
         <h2>What already runs</h2>
-        <p class="band-eyebrow">Oracle for behaviour · SQCSA for the C · no coqc job</p>
+        <p class="band-eyebrow">Oracle for behaviour · SQCSA for the C · coqc on Rocq 9.2</p>
       </div>
       <figure class="plate">
         <ul class="spec">
           <li><strong>Behaviour</strong><span><a href="bench.html">bench.html</a> publishes the host oracle: rt against the C library on this machine. Coefficient is libc time over rt time.</span></li>
           <li><strong>C scan</strong><span><a href="security.html">security.html</a> is <code>make security</code>. That gate does not read the assembly, and it does not discharge a proof.</span></li>
-          <li><strong>Coq</strong><span><code>make verify</code> checks <code>coq/MemsetNeon.v</code>: <code>rt_memset_neon</code> for every length below 2<sup>64</sup>. The GitHub workflow does not run <code>coqc</code> yet.</span></li>
+          <li><strong>Coq</strong><span><code>make verify</code> checks <code>coq/MemsetNeon.v</code>: <code>rt_memset_neon</code> for every length below 2<sup>64</sup>. The GitHub job <code>verify</code> runs that command on Rocq 9.2. Ubuntu 24.04 apt package <code>coq</code> is 8.18 and does not provide <code>From Stdlib</code>.</span></li>
         </ul>
         <figcaption>
           <span><b>Boundary</b> — a page is not a proof</span>
