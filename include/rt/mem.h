@@ -18,6 +18,8 @@
      avx2       x86-64, 32-byte, vzeroupper on every return
      avx512     x86-64, 64-byte ZMM, AVX-512F+BW; leaves ZMM state dirty
      neon/sve   AArch64
+     sme        Apple SME2. memcpy_sme, memset_sme, memcmp_sme.
+                The proved neon memset stays separate.
      rvv        RV32 or RV64 V, m8 e8 (one object per XLEN)
 */
 
@@ -63,6 +65,10 @@ int   rt_memcmp_neon(const void *a, const void *b, size_t n);
 void *rt_memcpy_sve(void *dst, const void *src, size_t n);
 void *rt_memset_sve(void *dst, int c, size_t n);
 int   rt_memcmp_sve(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_sme(void *dst, const void *src, size_t n);
+void *rt_memset_sme(void *dst, int c, size_t n);
+int   rt_memcmp_sme(const void *a, const void *b, size_t n);
 
 void *rt_memcpy_rvv(void *dst, const void *src, size_t n);
 void *rt_memset_rvv(void *dst, int c, size_t n);

@@ -1,0 +1,499 @@
+memset on Apple M4: __sme_memset and rt_memset_sme
+2026-11-13
+
+
+Contents
+
+  1. Contract
+  2. Intro
+  3. Which bytes run
+  4. Machine
+  5. Comparison
+  6. Control
+  7. Size
+  8. The aligned 4096-byte trace
+  9. Other lengths
+  10. Cycles
+  11. The host oracle
+  12. Paths this measurement leaves alone
+  13. What is proved
+  14. Reproduction
+
+
+1. Contract
+
+  The contract is what a caller can observe. It is the C99 statement
+  of memset. Both bodies in this note are held to it. A faster
+  schedule that breaks it is outside the comparison.
+
+    void *memset(void *dst, int c, size_t n)
+    {
+        unsigned char *d = (unsigned char *)dst;
+        unsigned char uc = (unsigned char)c;
+        size_t i;
+
+        for (i = 0; i < n; i++)
+            d[i] = uc;
+        return dst;
+    }
+
+  Return. The pointer that was passed. A length of 0 returns that
+  pointer and writes nothing.
+
+  Written. n copies of c, truncated to unsigned char. A fill outside
+  0..255 is reduced to its low 8 bits before any store. The values
+  -1 and 256+65 are that reduction.
+
+  Untouched. Every byte outside [dst, dst+n). The host suite checks
+  those bytes with a canary.
+
+  The statement covers every truncated fill and every length below
+  2^64. A list of lengths is a test, not a second contract. The
+  labels in the assembly are a schedule for the loop above. The
+  statement does not name the schedule.
+
+
+2. Intro
+
+  This note compares two implementations of section 1. The bodies
+  are the live __sme_memset and rt_memset_sme from
+  src/aarch64/sme/mem.S. The machine is the Apple M4 of
+  memset_neon.txt. That note is the NEON pair. This one does not
+  reuse its cycle counts.
+
+  The timed point is 4096 bytes, the destination 64-byte aligned,
+  the fill 0xA5. On that point both sides issue sixteen stores of
+  256 bytes. Apple's trip is 512 bytes, two stores. rt's trip is
+  256 bytes, one store. The host oracle prints 5000 ns and 5000 ns.
+  The coefficient is 1.00, which is parity under the 1.05 line.
+
+  Below 2048 bytes, rt discharges the contract with stp and does
+  not enter streaming mode. A zero fill of 32768 bytes and above
+  takes DC ZVA on the rt side. Apple's streaming body has neither
+  of those schedules. Section 9 counts them. They are not the
+  coefficient. rt_memset_sme is not proved. The on-disk scalar
+  memset is the libc column of the scalar table only.
+
+
+3. Which bytes run
+
+  The process's memset is not this routine. dlsym("memset") is
+  _platform_memset, the NEON body in memset_neon.txt.
+  dlsym("__sme_memset") is the symbol this note disassembles.
+  dlsym("___sme_memset") returns NULL. dlsym wants the C name.
+
+  The body has no smstart and no smstop. On this machine SVE is not
+  available, so the body is entered from streaming mode. The host
+  oracle calls it through rt_sme_call, which executes smstart, a
+  blr, and smstop. The same image also exports __sme_memcpy,
+  __sme_memmove, and __sme_memchr. Those symbols are not timed.
+  rt_memcpy_sme and rt_memcmp_sme have no body, so the sme table
+  has no row for them.
+
+  The live body was copied from the address dlsym returned and
+  disassembled with otool. It runs from the first mov through the
+  ret. The next word is pacibsp of a different function and is not
+  part of memset. The load address moves with the cache slide. The
+  on-disk file /usr/lib/system/libsystem_platform.dylib places
+  ___sme_memset at a different offset from the live symbol. This
+  note does not use that file. The on-disk scalar __platform_memset
+  is a third routine. Section 11 says where the oracle runs it.
+
+  rt_memset_sme is the Mach-O text of
+
+    cc -c src/aarch64/sme/mem.S
+
+  with Apple clang 21.0.0. The symbol is _rt_memset_sme. The next
+  symbol, _rt_sme_call, is the trampoline and is not part of the
+  memset kernel. rt_memset_neon lives in src/aarch64/neon/mem.S and
+  was left byte for byte as it is.
+
+
+4. Machine
+
+  Apple M4, model Mac16,12, the same core as memset_neon.txt.
+  Four performance cores, 128 KiB L1 data, 192 KiB L1 instruction,
+  16 MiB shared L2, 128-byte lines. sysctl reports FEAT_SME and
+  FEAT_SME2, and hw.optional.arm.sme_max_svl_b = 64. The walk below
+  uses that streaming vector length. rdvl of 1 is 64 bytes, rdvl
+  of 4 is 256, and rdvl of 8 is 512. The kernel compares rdvl of 1
+  with 64 and takes a one-vector loop when they differ. That arm
+  is not the walk in this note.
+
+  DC ZVA is the other large path. The kernel reads DCZID_EL0 and
+  uses dc zva only when bit 4 (DZP) is clear and the low nibble is
+  4, a 64-byte block. On this machine that register read as 0x4.
+  A streaming store does not consult it. Apple's __sme_memset does
+  not contain dc zva.
+
+
+5. Comparison
+
+  Both sides are held to section 1. The comparison separates their
+  schedules on one point, in a fixed order.
+
+  Same inputs. Both sides receive the same pointer, the same length,
+  and the same fill. A coefficient, where one is printed, is libc
+  time over rt time.
+
+  Schedule. Section 6 records the broadcast, the length cuts, the
+  store width, the trip, and the tail. A cut the timed point does
+  not take is still part of the body. Section 9 counts that cut.
+  The coefficient does not include it.
+
+  One exit. The coefficient names 4096 bytes, 64-byte aligned, fill
+  0xA5. It does not speak for a shorter length, a zero fill, or an
+  odd address.
+
+  Win. A published win is an unrounded coefficient of at least 1.05.
+  1.00 is parity. Parity on this exit is not a result for another
+  exit.
+
+  Proof. Section 13 records that this pair has none. Sharing the
+  contract with the proved neon body does not carry that proof here.
+
+  Size is the span of the instructions. For Apple that is the
+  live symbol, from the first mov through the ret. For rt it is the
+  assembled object, from _rt_memset_sme through its ret.
+  _rt_sme_call is counted separately. The oracle uses it on the
+  Apple side only.
+
+  The instruction trace is a walk of that encoding. A branch that
+  is not taken still counts. A branch that is taken does not bring
+  in the instructions it skips. A nop the program counter falls
+  into counts. A store counts as one instruction whatever its
+  width. Nothing in this walk was taken from a performance counter.
+
+  This note does not report a CNTPCT cycle pair for these two
+  bodies. The clock applied to both is the host oracle's
+  CLOCK_MONOTONIC, and section 11 is that result. The 133 and 132
+  cycles in memset_neon.txt are _platform_memset and rt_memset_neon.
+  They are not cycles of __sme_memset.
+
+
+6. Control
+
+  Apple's body is entered in streaming mode. The first instruction
+  broadcasts the fill:
+
+    mov     z0.b, w1
+
+  It then reads the vector length twice. rdvl x8, #1 is one vector.
+  rdvl x9, #4 is four vectors, 256 bytes at length 64. A length
+  below that goes to the whilelo tail. A longer length aligns the
+  pointer up to one vector. The whilehi store on that path is
+  skipped when the pointer is already aligned. Then:
+
+    ptrue   pn8.b
+
+  The main loop is eight instructions and advances 512 bytes, which
+  is rdvl of 8. Each trip stores two groups of four vectors:
+
+    st1b    { z0.b - z3.b }, pn8, [x11]
+    st1b    { z0.b - z3.b }, pn8, [x10]
+
+  z1, z2, and z3 are copies of z0, made once, before the loop.
+  After the loop, a remainder of at least 256 bytes gets one more
+  st1b of z4 through z7. What remains is a whilelo, st1b, incp
+  tail of one vector at a time. There is no test of the fill byte
+  and no dc zva.
+
+  rt saves the pointer, masks the fill to a byte, and splits before
+  any vector write:
+
+    mov     x8, x0
+    and     w1, w1, #0xff
+    cmp     x2, #2048
+    b.lo    .Lneo_prep
+
+  Below 2048 bytes, a zero fill included, control goes to
+  .Lneo_prep. That arm builds a scalar broadcast and stores with
+  stp q0, q0. It does not execute smstart. From 2048 bytes up, a
+  nonzero fill goes to .Lneo_sme. A zero fill does the same until
+  the length reaches 32768. At 32768 and above a zero fill reads
+  DCZID_EL0 and, on this machine, takes .Lneo_zva. Any other DCZID
+  result falls through to .Lneo_sme.
+
+  .Lneo_sme is the streaming arm. smstart is its first instruction.
+  The bytes before that arm do not write a NEON or SVE register.
+  The kernel then refuses a streaming length other than 64. For 64
+  it copies z0 into z1, z2, and z3, sets pn8, and loops:
+
+    st1b    { z0.b - z3.b }, pn8, [x0]
+    add     x0, x0, #256
+    sub     x2, x2, #256
+    cmp     x2, #256
+    b.hs    .Lneo_sme_loop
+
+  The trip is 256 bytes, one group of four vectors. The tail is
+  whilelo, st1b, incb, one vector at a time, then smstop, and the
+  saved pointer is returned. The three nops that align .Lneo_loop
+  sit on the stp arm. The streaming arm does not fall through them.
+
+
+7. Size
+
+  Apple __sme_memset is 228 bytes, 57 instructions, from the mov
+  through the ret. There is no padding in that span. The next
+  instruction, at byte 228, is pacibsp of the following function.
+  The pieces, as offsets from the symbol:
+
+    0 .. 27      entry and the 256-byte test       28 bytes
+    28 .. 75     align the pointer                  48 bytes
+    76 .. 147    512-byte loop and its setup        72 bytes
+    148 .. 187   one 256-byte group, if any         40 bytes
+    188 .. 227   whilelo tail and ret               40 bytes
+
+  The 512-byte loop is the eight instructions at offset 116. It is
+  32 bytes:
+
+    st1b    { z0.b - z3.b }, pn8, [x11]
+    add     x10, x11, x9
+    st1b    { z0.b - z3.b }, pn8, [x10]
+    add     x10, x11, x13
+    sub     x2, x2, x13
+    cmp     x2, x12
+    mov     x11, x10
+    b.hs    loop
+
+  rt_memset_sme is 500 bytes, 125 instructions, from the mov through
+  its ret. _rt_sme_call begins at the next word. Nothing is padded
+  between them. The pieces:
+
+    0 .. 47      length tests and DCZID             48 bytes
+    48 .. 123    DC ZVA head, loop, and tail        76 bytes
+    124 .. 255   streaming arm, both lengths       132 bytes
+    256 .. 499   stp arm, including three nops    244 bytes
+
+  Three of the 125 instructions are nop. They align .Lneo_loop on
+  the stp arm. A streaming call does not execute them.
+
+  rt_sme_call is 24 bytes and six instructions. It is not a memset:
+
+    stp     x29, x30, [sp, #-16]!
+    smstart
+    blr     x3
+    smstop
+    ldp     x29, x30, [sp], #16
+    ret
+
+  The oracle's libc column calls a small C function, which calls
+  this trampoline, which calls __sme_memset. The rt column calls
+  rt_memset_sme directly. Both timed calls pay one smstart and one
+  smstop. The Apple side also pays the trampoline frame and the
+  extra call.
+
+
+8. The aligned 4096-byte trace
+
+  Destination aligned to 64, n = 4096, fill nonzero, streaming
+  length 64. Both sides issue 16 stores of 256 bytes. That covers
+  4096 bytes. Neither side stores a remainder.
+
+  Apple, the body alone. 4096 is above rdvl of 4, so the short
+  tail is not the path taken. The pointer is aligned, so the
+  whilehi peel is not the path taken. 4096 / 512 is 8, so the loop
+  runs eight times and leaves a remainder of 0. The 256-byte
+  cleanup is not the path taken. whilelo of a zero length produces
+  an empty predicate and branches to ret.
+
+  Instructions retired in the body: 21 to the first store, 8 on
+  each of the eight trips (64), then subs, the taken b.lo, the
+  empty whilelo, its taken b.eq, and ret (5). The total is 90.
+  Sixteen of those 90 are st1b of four vectors. smstart is not
+  among them. The six instructions of the trampoline sit around
+  this body in the oracle's libc call. They are the call, not a
+  second copy of the 90.
+
+  rt. 4096 is past the 2048 test, and the fill is not zero, so the
+  arm is .Lneo_sme. smstart runs. rdvl equals 64, so the one-vector
+  arm is left untaken. 4096 / 256 is 16, so the loop runs sixteen
+  times and leaves a remainder of 0. cbz takes the smstop path.
+  The whilelo tail stays untaken. The stp nops stay untaken.
+
+  Instructions retired: 16 to the first store, counting smstart and
+  the two untaken branches, 5 on each of the sixteen trips (80),
+  then the taken cbz, smstop, the restore, and ret (4). The total
+  is 100. Sixteen of those 100 are st1b of four vectors. smstart
+  and smstop are inside the 100.
+
+  The store work is the same sixteen groups. The instruction work
+  is not. Apple's trip is twice as long, so the body issues fewer
+  branches per byte. rt pays the mode switch inside the function
+  the oracle calls. Apple pays it in the trampoline wrapped around
+  a body that has neither smstart nor smstop. The gap is a handful
+  of arithmetic instructions beside sixteen 256-byte stores.
+
+
+9. Other lengths
+
+  The same rules, still at streaming length 64, still counting a
+  branch that falls through. These lengths have no oracle row of
+  their own.
+
+  n = 512, aligned, nonzero. Apple enters its 512-byte loop for a
+  remaining length of 512, takes one trip, two stores, and no
+  cleanup. The body retires 21 + 8 + 5 = 34 instructions. rt is
+  below 2048, so smstart stays unexecuted. The stp arm broadcasts
+  in general registers and stores 64 bytes at a time with stp.
+  The store width and the mode both differ. On the oracle the
+  Apple column would still pay the trampoline. The rt column
+  would not.
+
+  n = 63. Apple's body is under 256 bytes, so the path is the
+  whilelo tail: one predicated store when the length fits in one
+  vector of 64. rt takes the stp arm and covers the range with two
+  overlapping stp q0, q0. smstart stays on the Apple side of the
+  oracle, inside the trampoline.
+
+  n = 4096, aligned, fill zero. The length is under 32768, so rt
+  still takes .Lneo_sme and retires the same 100 instructions as
+  the nonzero row. Apple has no zero test, so the body is the same
+  90 instructions. DC ZVA does not run at this length.
+
+  n = 32768, aligned, fill zero. rt passes the 2048 test, sees a
+  zero fill, passes the 32768 test, and DCZID_EL0 selects
+  .Lneo_zva. The pointer is aligned, so the head stp pair is
+  skipped. 32768 / 64 = 512, and the loop issues dc zva that many
+  times. Each of those trips is six instructions. One further trip
+  sees the end and branches to the tail. The tail compares equal
+  and returns without the closing stp pair. The retired count is
+  16 + 512 * 6 + 3 + 4 = 3095 instructions, 512 of them dc zva,
+  and none of them a streaming store. Apple's body does not read
+  the fill. 32768 / 512 = 64 trips of the eight-instruction loop,
+  remainder 0, so the body retires 21 + 64 * 8 + 5 = 538
+  instructions and 128 streaming stores. The published row is fill
+  0xA5 and length 4096. It does not time this path. The coefficient
+  on the published row does not say which side wins a large zero.
+
+  An unaligned Apple pointer executes the whilehi peel once and
+  then the 512-byte loop on the bytes that remain. The rt streaming
+  arm has no peel. st1b of four vectors is issued at the caller's
+  address. The stp arm, used below 2048, does align its loop. The
+  published row is aligned, so neither peel runs.
+
+
+10. Cycles
+
+  No CNTPCT sample of this pair is reported here. The 133 and 132
+  cycles in the neon note were taken at 4363129645 Hz, and they
+  belong to _platform_memset and rt_memset_neon. A sample taken at
+  another clock is not a substitute for those two numbers, and
+  those two numbers are not this pair.
+
+  The measurement of this pair is the host oracle in section 11.
+  CLOCK_MONOTONIC on this Mac steps by 1000 ns. The memset sample
+  is 256 calls. One step of that clock, spread over the sample, is
+  about 17 core cycles at the 4.36 GHz of the neon note. A few
+  extra arithmetic instructions, or one extra call through the
+  trampoline, stay inside the same tick. The oracle can print
+  parity for two loops that retire different instructions. That is
+  the reading of 1.00 below.
+
+
+11. The host oracle
+
+  verify/suite/test_host.c times this row as the memset line of the
+  sme table. It is the only sme line. The libc function is
+  apple_sme_memset, which calls rt_sme_call on __sme_memset. The rt
+  function is rt_memset_sme. The two sides use separate clocks:
+  every libc sample finishes, smstop included, before an rt sample
+  starts. The buffer is g_a+PAD. The array and PAD are both 64.
+  The fill is 0xA5 and the length is 4096. The timed body is 256
+  calls, a warmup of 16, and the median of 21 samples.
+
+  The run that split each table onto its own functions printed:
+
+    sme memset     libc 5000 ns   rt 5000 ns
+    checks 24696   fail 0         coef 1.00
+
+  The check count is twice the neon memset count. The libc pointer
+  is not memset, so the correctness sweep runs on both sides. coef
+  is libc_ns / rt_ns. A published win is an unrounded coefficient
+  of at least 1.05. 1.00 is parity.
+
+  The scalar table's memset line is plugged in, and it is a
+  different pair. Before the scalar backend runs, the oracle maps
+  the on-disk arm64 __platform_memset from libsystem_platform.dylib.
+  The copy starts at __platform_bzero, because a zero fill of
+  32768 bytes and above branches there, and it stops before the
+  first bl or adrp. That pointer is the libc column only when the
+  backend name is scalar. The same run printed:
+
+    scalar memset  libc 8000 ns   rt 8000 ns
+    checks 24696   fail 0         coef 1.00
+
+  The rt function on that line is rt_memset_scalar. The neon table
+  does not use the mapping. Its libc column is the live memset,
+  _platform_memset, against rt_memset_neon. The sme table does not
+  use the mapping.
+
+  A row appears only when that backend has the function. The scalar
+  table holds the scalar memory, string, numeric, sort, format, and
+  allocator rows. The neon table holds neon memcpy, memset, memcmp,
+  strlen, strcmp, the extra strcmp rows, and strchr. The sme table
+  holds memset. include/rt/mem.h declares rt_memcpy_sme and
+  rt_memcmp_sme. They have no body, and they are not rows. Numeric,
+  sort, format, and alloc are scalar, and they stay on the scalar
+  table.
+
+
+12. Paths this measurement leaves alone
+
+  The published coefficient is one point. The pointer is aligned,
+  the length is 4096, the fill is 0xA5, both sides run in streaming
+  mode, and Apple is entered through the trampoline.
+
+  Below 2048 bytes the rt arm is stp. Apple's symbol has no stp
+  arm. At 32768 bytes and above, a zero fill is DC ZVA on the rt
+  side and a streaming store on the Apple side. Section 9 counts
+  the instructions. The oracle does not time either point.
+
+  __sme_memcpy, __sme_memmove, and __sme_memchr were not called.
+  The sme file has no rt body to place opposite memcpy or memcmp,
+  and it has no memchr. The table does not grow a row for a missing
+  function.
+
+  This file is compiled into the Darwin arm64 host oracle only.
+  Linux and the QEMU jobs do not build it. A machine without SME,
+  such as an M1, cannot run the streaming arm.
+
+
+13. What is proved
+
+  Nothing in this file is proved. verify/models/MemsetNeon.v models
+  rt_memset_neon, the text in src/aarch64/neon/mem.S, and that text
+  only. rt_memset_sme is another symbol in another file. The model
+  does not name it. __sme_memset is outside the model. There is no
+  theorem for the streaming stores, for the stp arm, or for the
+  DC ZVA arm.
+
+  The store width, the trip count, the mode switch, and the zero
+  path are different instructions from the proved neon loop.
+  MemsetNeon.v does not become a proof of this routine by the two
+  programs both writing memory.
+
+
+14. Reproduction
+
+  Apple: from a running process, disassemble the address returned
+  by dlsym("__sme_memset"), and stop at the ret. Reject the
+  pacibsp that follows. Reject the on-disk dylib. Its ___sme_memset
+  sits at another offset, and its __platform_memset is the scalar
+  body used by the scalar table.
+
+  rt: assemble src/aarch64/sme/mem.S and disassemble _rt_memset_sme.
+  Stop at its ret. _rt_sme_call is the next symbol. The streaming
+  walk takes rdvl of 1 to be 64, the value of
+  hw.optional.arm.sme_max_svl_b on this machine. Another length
+  takes .Lneo_sme_any, and that is a different trace.
+
+  The totals are the walks in sections 8 and 9. A taken branch and
+  a branch that falls through both count. The 4096-byte Apple walk
+  is 8 trips because each trip covers 512 bytes. The rt walk is 16
+  trips because each trip covers 256 bytes.
+
+  The oracle is sh scripts/run.sh in the depot tree. Read the sme
+  memset numbers from the sme table. Read the scalar memset numbers
+  from the scalar table. The two libc columns are different
+  functions.

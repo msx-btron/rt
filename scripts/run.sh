@@ -40,7 +40,8 @@ asm32() {
 case "$os:$arch:$mode" in
 Darwin:arm64:*|Darwin:aarch64:*)
     "$cc" $cflags -o build/test_host "$suite" $scalar_src \
-        src/aarch64/neon/mem.S src/aarch64/neon/string.S
+        src/aarch64/neon/mem.S src/aarch64/neon/string.S \
+        src/aarch64/sme/mem.S
     run_bin ./build/test_host
     ;;
 Linux:x86_64:*)

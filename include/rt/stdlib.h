@@ -13,15 +13,16 @@ unsigned long long rt_strtoull(const char *s, char **end, int base);
 long              rt_strtol(const char *s, char **end, int base);
 long long         rt_strtoll(const char *s, char **end, int base);
 
-/* Ciura shell sort — O(1) stack, original BTRON/rt plane. */
-void              rt_qsort(void *base, size_t nmemb, size_t size,
-                           int (*cmp)(const void *, const void *));
-
 /* Iterative introsort (no recursion). Explicit stack ≤ 64 frames.
    JPL Power-of-10 friendly: bounded loops, fixed stack, no malloc.
    Aimed at host-libc parity or better on random integer keys. */
-void              rt_qsort_neo(void *base, size_t nmemb, size_t size,
-                               int (*cmp)(const void *, const void *));
+void              rt_qsort(void *base, size_t nmemb, size_t size,
+                           int (*cmp)(const void *, const void *));
+
+/* Ciura shell sort — O(1) stack, original BTRON/rt plane.
+   Kept in the library. The oracle does not time it. */
+void              rt_qsort_simple(void *base, size_t nmemb, size_t size,
+                                  int (*cmp)(const void *, const void *));
 
 int               rt_abs(int x);
 long              rt_labs(long x);

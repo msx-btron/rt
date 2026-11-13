@@ -7,12 +7,12 @@ IMPLEMENTED
            strcmp strncmp strchr strrchr strstr strpbrk
            strscpy strscat strpad
   numeric: atoi strtoul strtoull strtol strtoll abs labs
-  sort:    qsort (Ciura shell, O(1) stack)
+  sort:    qsort (introsort), qsort_simple (Ciura shell, O(1) stack)
   format:  snprintf vsnprintf fmt_f32 fmt_f32_into
   alloc:   alloc_init malloc calloc realloc free (optional pool)
 
 SIMD backends (memcpy/memset/memcmp only):
   x86_64: sse2 avx2 avx512
   i386:   rep mmx sse pc98
-  aarch64: neon sve
+  aarch64: neon sve sme
   riscv32/64: rvv

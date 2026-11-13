@@ -140,7 +140,7 @@ static void el_copy(unsigned char *d, const unsigned char *s, size_t n)
         d[k] = s[k];
 }
 
-void rt_qsort(void *base, size_t nmemb, size_t size,
+void rt_qsort_simple(void *base, size_t nmemb, size_t size,
               int (*cmp)(const void *, const void *))
 {
     unsigned char *b = (unsigned char *)base;
@@ -183,7 +183,7 @@ void rt_qsort(void *base, size_t nmemb, size_t size,
 
 
 /* ========================================================================
-   rt_qsort_neo — iterative introsort
+   rt_qsort — iterative introsort
    ------------------------------------------------------------------------
    NASA JPL Power of Ten / BTRON constraints observed:
      - no recursion (explicit stack, max 64 frames)
@@ -401,7 +401,7 @@ static void neo_qsort_int(int *a, size_t nmemb,
     }
 }
 
-void rt_qsort_neo(void *base, size_t nmemb, size_t size,
+void rt_qsort(void *base, size_t nmemb, size_t size,
                   int (*cmp)(const void *, const void *))
 {
     unsigned char *b = (unsigned char *)base;

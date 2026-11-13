@@ -1,25 +1,79 @@
 memset on Apple M4: _platform_memset and rt_memset_neon
 2026-11-13
 
-The host oracle prints one time for both memset routines on its
-published row. This note counts the bytes, walks the instructions
-those bytes execute, and measures the cycles on that row. The row is
-4096 bytes, the destination 64-byte aligned, the fill 0xA5.
+
+Contents
+
+  1. Contract
+  2. Intro
+  3. Which bytes run
+  4. Machine
+  5. Comparison
+  6. Control
+  7. Size
+  8. The aligned 4096-byte trace
+  9. Other lengths
+  10. Cycles
+  11. The host oracle
+  12. Paths this measurement leaves alone
+  13. What is proved
+  14. Reproduction
 
 
-1. Question
+1. Contract
 
-  Two routines write the same bytes with the same store width. The
-  oracle's clock cannot separate them. The question is whether that
-  is one loop issued twice, or two loops that happen to take the same
-  number of cycles.
+  The contract is what a caller can observe. It is the C99 statement
+  of memset. Both bodies in this note are held to it. A faster
+  schedule that breaks it is outside the comparison.
 
-  The comparison is the cacheable path of Apple's routine against
-  .Lms_64 in rt_memset_neon. Other lengths are counted in the
-  instruction trace and were not put on the cycle counter.
+    void *memset(void *dst, int c, size_t n)
+    {
+        unsigned char *d = (unsigned char *)dst;
+        unsigned char uc = (unsigned char)c;
+        size_t i;
+
+        for (i = 0; i < n; i++)
+            d[i] = uc;
+        return dst;
+    }
+
+  Return. The pointer that was passed. A length of 0 returns that
+  pointer and writes nothing.
+
+  Written. n copies of c, truncated to unsigned char. A fill outside
+  0..255 is reduced to its low 8 bits before any store. The values
+  -1 and 256+65 are that reduction.
+
+  Untouched. Every byte outside [dst, dst+n). The host suite checks
+  those bytes with a canary.
+
+  The statement covers every truncated fill and every length below
+  2^64. A list of lengths is a test, not a second contract. The
+  labels in the assembly are a schedule for the loop above. The
+  statement does not name the schedule.
 
 
-2. Which bytes run
+2. Intro
+
+  This note compares two implementations of section 1. The bodies
+  are the live _platform_memset in this process and rt_memset_neon
+  from src/aarch64/neon/mem.S. The machine is the Apple M4 in
+  section 4. The streaming pair is a different body and is written
+  in memset_sme.txt.
+
+  The timed point is 4096 bytes, the destination 64-byte aligned,
+  the fill 0xA5. That point takes the cacheable stp path in Apple's
+  routine and .Lms_64 in rt. The host oracle prints one time for
+  both. This note names the bytes, walks the instructions they
+  execute, and measures the cycles on that point.
+
+  Other lengths are walked and were not put on the cycle counter.
+  The on-disk scalar memset is not this body. A coefficient of 1.00
+  is parity. A published win is an unrounded coefficient of at
+  least 1.05, and it belongs to the exit that was timed.
+
+
+3. Which bytes run
 
   A call to memset in this process binds one symbol.
   dlsym("memset") and dlsym("_platform_memset") returned the same
@@ -42,7 +96,7 @@ those bytes execute, and measures the cycles on that row. The row is
   _rt_memset_neon. The source is src/aarch64/neon/mem.S.
 
 
-3. Machine
+4. Machine
 
   Apple M4, model Mac16,12. Four performance cores share a 16 MiB L2.
   Each has a 128 KiB L1 data cache and a 192 KiB L1 instruction cache.
@@ -55,9 +109,33 @@ those bytes execute, and measures the cycles on that row. The row is
   repeats it, so the lines are hot. This is an L1 store stream.
 
 
-4. Method
+5. Comparison
 
-  Code size is the span of the instructions. For Apple that is the
+  Both sides are held to section 1. The comparison separates their
+  schedules on one point, in a fixed order.
+
+  Same inputs. Both sides receive the same pointer, the same length,
+  and the same fill. A coefficient, where one is printed, is libc
+  time over rt time.
+
+  Schedule. Section 6 records the broadcast, the length cuts, the
+  store width, the trip, and the tail. A cut the timed point does
+  not take is still part of the body. Section 9 counts that cut.
+  The coefficient does not include it.
+
+  One exit. The coefficient names 4096 bytes, 64-byte aligned, fill
+  0xA5. It does not speak for the tail, the short path, a zero fill,
+  or an odd address.
+
+  Win. A published win is an unrounded coefficient of at least 1.05.
+  1.00 is parity. Parity on this exit is not a result for another
+  exit.
+
+  Proof. Section 13, when it has a proof, is a proof of one encoding
+  against section 1. Sharing the contract does not carry the proof
+  onto the other body.
+
+  Size is the span of the instructions. For Apple that is the
   shared-cache symbol, from the first and through the ret of the byte
   tail. For rt it is the assembled object, from _rt_memset_neon
   through the last branch, plus the padding the next symbol's
@@ -91,7 +169,7 @@ those bytes execute, and measures the cycles on that row. The row is
   zero path does not run.
 
 
-5. Control
+6. Control
 
   Both routines broadcast one byte into a 16-byte register and then
   store that register. The broadcast is different, and so is the
@@ -128,7 +206,7 @@ those bytes execute, and measures the cycles on that row. The row is
   tail.
 
 
-6. Size
+7. Size
 
   Apple _platform_memset is 212 bytes, 53 instructions, and contains
   no padding. The pieces, as offsets from the symbol:
@@ -183,7 +261,7 @@ those bytes execute, and measures the cycles on that row. The row is
   instruction: two Q registers, 32 bytes, issued twice per 64 bytes.
 
 
-7. The aligned 4096-byte trace
+8. The aligned 4096-byte trace
 
   Destination aligned to 64, n = 4096, fill nonzero. Both sides issue
   128 stp-q instructions. That is 64 pairs, 32 bytes each, 4096 bytes,
@@ -222,7 +300,7 @@ those bytes execute, and measures the cycles on that row. The row is
   rt's return.
 
 
-8. Other lengths
+9. Other lengths
 
   These are the same kind of walk. They are not cycle measurements.
   "stp" is the number of 32-byte store instructions, including stnp.
@@ -270,7 +348,7 @@ those bytes execute, and measures the cycles on that row. The row is
   as any other fill of that length.
 
 
-9. Cycles
+10. Cycles
 
   Eleven rounds, performance core, aligned 4096, fill 0xA5. Cycles
   are per call, empty call removed. The clock is the median of the
@@ -317,7 +395,7 @@ those bytes execute, and measures the cycles on that row. The row is
   1.05. This gap is inside the round noise and under that line.
 
 
-10. The host oracle
+11. The host oracle
 
   verify/suite/test_host.c times this same point and no other memset
   shape. The buffer is g_a+PAD with both the array and PAD equal to
@@ -335,7 +413,7 @@ those bytes execute, and measures the cycles on that row. The row is
   them.
 
 
-11. Paths this measurement leaves alone
+12. Paths this measurement leaves alone
 
   The cycle number is one point. The instruction walk shows where a
   second point would be measuring a different machine.
@@ -353,7 +431,7 @@ those bytes execute, and measures the cycles on that row. The row is
   for them.
 
 
-12. Proof
+13. What is proved
 
   verify/models/MemsetNeon.v is an instruction-accurate model of the
   rt text, and of that text only. rt_memset_neon_any quantifies every
@@ -366,7 +444,7 @@ those bytes execute, and measures the cycles on that row. The row is
   two programs already take the same number of cycles.
 
 
-13. Reproduction
+14. Reproduction
 
   Size and the Apple offsets: stop a process in main and disassemble
   the address dlsym returns for _platform_memset, and the 96 bytes
@@ -376,7 +454,7 @@ those bytes execute, and measures the cycles on that row. The row is
   _rt_memset_neon. The loop label is 16-byte aligned. The two nops
   in front of it are in the fall-through from the n>=64 test.
 
-  The instruction tables are the walk in sections 7 and 8. A taken
+  The instruction tables are the walk in sections 8 and 9. A taken
   and an untaken branch both count. The 4096-byte Apple walk is
   62 trips of the loop because the head and the tail each cover 64
   bytes. The rt walk is 64 trips because nothing is lifted out.
@@ -384,5 +462,5 @@ those bytes execute, and measures the cycles on that row. The row is
   Cycles: pin a performance core, time CNTPCT_EL0 around a dependent
   add chain and around 400000 calls, subtract an empty call, convert
   with CNTFRQ_EL0 and a one-cycle add. Report the median of several
-  rounds. One round is not the result. The spread in section 9 is
+  rounds. One round is not the result. The spread in section 10 is
   part of the result.

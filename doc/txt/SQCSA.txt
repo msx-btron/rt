@@ -59,8 +59,8 @@ the same: make security. The modules are this library, not the OS tree.
   returns 0 and writes a NUL when the buffer is non-empty.
 
   mem.c, string.c, and stdlib.c produced no clang --analyze diagnostics
-  and no cppcheck warning or portability findings. rt_qsort remains in
-  the library. The oracle times rt_qsort_neo only.
+  and no cppcheck warning or portability findings. rt_qsort_simple remains
+  in the library. The oracle times rt_qsort only.
 
 
 3. Host oracle
@@ -77,7 +77,7 @@ the same: make security. The modules are this library, not the OS tree.
 
   The sort arrays are zeroed at entry. cppcheck's uninitvar note on
   qsort of a zero-length prefix does not fire. The printed tables
-  carry qsort_neo only.
+  carry qsort only. rt_qsort_simple is not called.
 
   verify/suite/test_mem.c produced no diagnostics from any of the three tools.
 
