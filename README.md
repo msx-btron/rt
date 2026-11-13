@@ -61,22 +61,22 @@ Apple M4 libc macOS vs B-System RT — ARM64 NEON Backend:
 |           +-- stdlib.c ................................... [PASS]
 |           \-- string.c ................................... [PASS]
 \-- verify/
-    +-- test_host.c ........................................ [PASS]
-    \-- test_mem.c ......................................... [PASS]
+    \-- suite/
+        +-- test_host.c .................................... [PASS]
+        \-- test_mem.c ..................................... [PASS]
 ```
 
 ## Mathematical Verifiaction up to 2<sup>64</sup>
 
 ```
 $ make verify
-verify: coqc coq/MemsetNeon.v
+verify: coqc verify/models/MemsetNeon.v
 verify: rt_memset_neon, n < 2^64 checked
 ```
 
 ## Directory
 
 ```
-├── coq
 ├── doc
 │   └── txt
 ├── include
@@ -89,10 +89,10 @@ verify: rt_memset_neon, n < 2^64 checked
 │   ├── riscv32
 │   ├── riscv64
 │   └── x86_64
-├── tools
 └── verify
-    ├── build
-    └── ci
+    ├── ci
+    ├── models
+    └── suite
 ```
 
 ## Makefile Targets

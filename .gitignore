@@ -1,4 +1,4 @@
-verify/build
+/build/
 *.o
 *.vo
 *.vos

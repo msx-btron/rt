@@ -2,7 +2,7 @@ Security and Quality Code Static Analysis
 src/common/scalar  and  verify/  —  2026-11-13
 
 Scope is the scalar C99 runtime under src/common/scalar/ and the host
-oracle (verify/test_host.c, verify/test_mem.c), plus the headers they
+oracle (verify/suite/test_host.c, verify/suite/test_mem.c), plus the headers they
 include. Assembly backends under src/aarch64, src/i386, src/riscv32,
 src/riscv64, and src/x86_64 are not scanned and not edited. These three
 tools read C.
@@ -25,7 +25,7 @@ the same: make security. The modules are this library, not the OS tree.
     -Werror and -O2 are not passed. Analyzer warnings stay warnings.
 
   flawfinder 2.0.20
-    flawfinder --minlevel=4 --quiet src/common/scalar verify/test_host.c verify/test_mem.c
+    flawfinder --minlevel=4 --quiet src/common/scalar verify/suite/test_host.c verify/suite/test_mem.c
     Exit 0. flawfinder exits 0 when it has hits, so a green exit is not a
     clean tree. Level 2 is where a fixed-size char array sits. The gate
     uses level 4 so that noise is not a failure.
@@ -33,7 +33,7 @@ the same: make security. The modules are this library, not the OS tree.
   cppcheck 2.22.0
     cppcheck -j4 --std=c99 --enable=warning,portability
       --error-exitcode=1 --quiet -Iinclude
-      src/common/scalar verify/test_host.c verify/test_mem.c
+      src/common/scalar verify/suite/test_host.c verify/suite/test_mem.c
     A finding makes cppcheck exit 1. The Makefile also fails the recipe
     when clang's log contains warning: or error:, or when flawfinder's
     log contains a :line: hit. Those two tools exit 0 with hits.
@@ -65,7 +65,7 @@ the same: make security. The modules are this library, not the OS tree.
 
 3. Host oracle
 
-  verify/test_host.c and verify/test_mem.c.
+  verify/suite/test_host.c and verify/suite/test_mem.c.
 
   The strcpy row no longer calls libc strcpy. The source fills a
   512-byte buffer with the NUL in the last byte. The libc side is
@@ -79,24 +79,24 @@ the same: make security. The modules are this library, not the OS tree.
   qsort of a zero-length prefix does not fire. The printed tables
   carry qsort_neo only.
 
-  verify/test_mem.c produced no diagnostics from any of the three tools.
+  verify/suite/test_mem.c produced no diagnostics from any of the three tools.
 
 
 4. How to repeat
 
   make security
   make security-report
-  python3 tools/sqcsa_update.py src/common/scalar verify
+  python3 scripts/sqcsa_update.py src/common/scalar verify
 
-  flawfinder --minlevel=4 --quiet src/common/scalar verify/test_host.c verify/test_mem.c
+  flawfinder --minlevel=4 --quiet src/common/scalar verify/suite/test_host.c verify/suite/test_mem.c
   cppcheck --std=c99 --enable=warning,portability --quiet \
-      -Iinclude src/common/scalar verify/test_host.c verify/test_mem.c
+      -Iinclude src/common/scalar verify/suite/test_host.c verify/suite/test_mem.c
   clang --analyze -std=c99 -Wall -Wextra -Wformat=2 \
       -fno-strict-aliasing -fno-builtin -Iinclude \
       -Xanalyzer -analyzer-output=text \
       src/common/scalar/mem.c src/common/scalar/string.c \
       src/common/scalar/stdio.c src/common/scalar/stdlib.c \
-      verify/test_host.c verify/test_mem.c
+      verify/suite/test_host.c verify/suite/test_mem.c
 
 
 5. Per-module security gate targets  —  2026-11-13
@@ -111,7 +111,7 @@ the same: make security. The modules are this library, not the OS tree.
 
   Results recorded on 2026-11-13 (Apple clang 21.0.0, flawfinder 2.0.20,
   cppcheck 2.22.0, arm64 Mac). The blocks below are rewritten by
-  tools/sqcsa_update.py.
+  scripts/sqcsa_update.py.
 
   ── sec-scalar  (src/common/scalar/)  —  updated 2026-11-13  ─────────────────────────────────────────
 

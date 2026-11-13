@@ -2,8 +2,9 @@
 # i386 backend tables under QEMU.
 # Linux x86_64: qemu-i386 user-mode + gcc -m32 (fast path).
 # macOS ARM:   qemu-system-x86_64 + Alpine Linux VM (no Docker).
+# Anchored at the repo root. The Alpine ISO stays in verify/.cache.
 set -eu
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 host_arch=$(uname -m 2>/dev/null || echo unknown)
 host_os=$(uname -s 2>/dev/null || echo unknown)
@@ -20,12 +21,12 @@ linux_usermode() {
         echo "cc -m32 failed. Install gcc-multilib / libc6-dev-i386." >&2
         exit 1
     fi
-    cflags="-std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fno-builtin -I../include"
-    scalar="../src/common/scalar/mem.c ../src/common/scalar/string.c \
-../src/common/scalar/stdlib.c ../src/common/scalar/stdio.c"
+    cflags="-std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fno-builtin -Iinclude"
+    scalar="src/common/scalar/mem.c src/common/scalar/string.c \
+src/common/scalar/stdlib.c src/common/scalar/stdio.c"
     mkdir -p build
-    $cc $cflags -m32 -static -o build/test_host32s test_host.c $scalar \
-        ../src/i386/rep/mem.s ../src/i386/mmx/mem.s ../src/i386/sse/mem.s
+    $cc $cflags -m32 -static -o build/test_host32s verify/suite/test_host.c $scalar \
+        src/i386/rep/mem.s src/i386/mmx/mem.s src/i386/sse/mem.s
     cp -f build/test_host32s /tmp/rt_test_host32s
     chmod +x /tmp/rt_test_host32s
     run_one() {
@@ -37,7 +38,7 @@ linux_usermode() {
     pentium3|p3) run_one pentium3 ;;
     pentium2|p2) run_one pentium2 ;;
     all) run_one pentium2; echo; run_one pentium3 ;;
-    native|host) sh ./run.sh ;;
+    native|host) sh scripts/run.sh ;;
     *) echo "usage: $0 {pentium3|pentium2|all|native}" >&2; exit 1 ;;
     esac
 }
@@ -51,7 +52,7 @@ macos_system_vm() {
         exit 1
     fi
 
-    cache="$(pwd)/.cache"
+    cache="$(pwd)/verify/.cache"
     mkdir -p "$cache"
     # Alpine virt x86_64 — small, has apk + build tools available after setup
     ALPINE_VER="3.21.3"
@@ -79,8 +80,8 @@ macos_system_vm() {
         echo "  1) login: root (no password)"
         echo "  2) setup-alpine  (defaults OK; set disk mode 'sys' on vda)"
         echo "  3) after reboot: apk add build-base"
-        echo "  4) mount -t 9p -o trans=virtio rt /mnt && cd /mnt/verify"
-        echo "  5) sh ./qemu.sh pentium3   # now inside Linux x86_64 — user-mode works"
+        echo "  4) mount -t 9p -o trans=virtio rt /mnt"
+        echo "  5) cd /mnt && sh scripts/qemu.sh pentium3"
         echo ""
         echo "Starting installer VM (Ctrl-A X to exit qemu)..."
         exec qemu-system-x86_64 \
@@ -88,19 +89,19 @@ macos_system_vm() {
             -drive file="$DISK",if=virtio \
             -cdrom "$ISO" -boot d \
             -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-            -fsdev local,id=rt,path="$(cd .. && pwd)",security_model=none \
+            -fsdev local,id=rt,path="$(pwd)",security_model=none \
             -device virtio-9p-pci,fsdev=rt,mount_tag=rt \
             -nographic
     fi
 
     echo "Booting Alpine disk with rt/ shared as 9p tag 'rt'..."
     echo "  mount -t 9p -o trans=virtio rt /mnt"
-    echo "  cd /mnt/verify && sh ./qemu.sh $target"
+    echo "  cd /mnt && sh scripts/qemu.sh $target"
     exec qemu-system-x86_64 \
         -machine q35 -m 1024 -smp 2 \
         -drive file="$DISK",if=virtio \
         -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-        -fsdev local,id=rt,path="$(cd .. && pwd)",security_model=none \
+        -fsdev local,id=rt,path="$(pwd)",security_model=none \
         -device virtio-9p-pci,fsdev=rt,mount_tag=rt \
         -nographic
 }

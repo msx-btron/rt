@@ -4,7 +4,7 @@
 # Linux x86_64: make       → scalar + sse2/avx2/avx512 tables
 # Linux + qemu: make qemu  → pentium2 + pentium3 tables
 # make security            → clang --analyze, flawfinder, cppcheck, ASCII report
-# make verify              → coqc coq/MemsetNeon.v (rt_memset_neon, n < 2^64)
+# make verify              → coqc verify/models/MemsetNeon.v (rt_memset_neon, n < 2^64)
 #
 .PHONY: all test test32 qemu qemu-p2 qemu-p3 clean verify \
 	security security-report sec-scalar sec-verify
@@ -39,13 +39,14 @@ verify:
 	else \
 	  echo "coqc not on PATH"; exit 1; \
 	fi; \
-	echo "verify: $$compiler coq/MemsetNeon.v"; \
-	$$compiler coq/MemsetNeon.v; \
+	echo "verify: $$compiler verify/models/MemsetNeon.v"; \
+	$$compiler verify/models/MemsetNeon.v; \
 	echo "verify: rt_memset_neon, n < 2^64 checked"
 
 clean:
 	$(MAKE) -C verify clean
-	rm -f coq/*.vo coq/*.vos coq/*.vok coq/*.glob coq/*.vo.aux
+	rm -f verify/models/*.vo verify/models/*.vos verify/models/*.vok \
+		verify/models/*.glob verify/models/*.vo.aux
 
 # ── Security and quality static analysis ─────────────────────────────────────
 # Same tools as bitedits/btron `make security`: clang --analyze, flawfinder
@@ -63,8 +64,8 @@ SCALAR_SRCS = \
 	src/common/scalar/stdlib.c
 
 VERIFY_SRCS = \
-	verify/test_host.c \
-	verify/test_mem.c
+	verify/suite/test_host.c \
+	verify/suite/test_mem.c
 
 sec-scalar:
 	@echo "=========================================================="

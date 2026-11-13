@@ -27,7 +27,7 @@ jobs:
       - name: Host oracle
         run: |
           set -eux
-          cc $CFLAGS -Iinclude -o /tmp/test_host verify/test_host.c \
+          cc $CFLAGS -Iinclude -o /tmp/test_host verify/suite/test_host.c \
             src/common/scalar/mem.c src/common/scalar/string.c \
             src/common/scalar/stdlib.c src/common/scalar/stdio.c \
             src/x86_64/sse2/mem.s src/x86_64/avx2/mem.s src/x86_64/avx512/mem.s
@@ -49,7 +49,7 @@ jobs:
       - name: Build static i386 oracle
         run: |
           set -eux
-          cc $CFLAGS -m32 -static -Iinclude -o /tmp/test_host32 verify/test_host.c \
+          cc $CFLAGS -m32 -static -Iinclude -o /tmp/test_host32 verify/suite/test_host.c \
             src/common/scalar/mem.c src/common/scalar/string.c \
             src/common/scalar/stdlib.c src/common/scalar/stdio.c \
             src/i386/rep/mem.s src/i386/mmx/mem.s src/i386/sse/mem.s
@@ -81,7 +81,7 @@ jobs:
         run: |
           set -eux
           aarch64-linux-gnu-gcc $CFLAGS -static -Iinclude \
-            -o /tmp/test_host_a64 verify/test_host.c \
+            -o /tmp/test_host_a64 verify/suite/test_host.c \
             src/common/scalar/mem.c src/common/scalar/string.c \
             src/common/scalar/stdlib.c src/common/scalar/stdio.c \
             src/aarch64/neon/mem.S src/aarch64/neon/string.S

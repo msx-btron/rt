@@ -12,7 +12,7 @@ GitHub Actions workflow: `.github/workflows/ci.yml`
 | `riscv64-rvv` | RVV64 | assemble + `qemu-riscv64 -cpu rv64,v=true` |
 | `riscv32-rvv` | RVV32 | assemble |
 | `sqcsa` | scalar C + host oracle | SQCSA Test Suite: `make security` |
-| `verify` | `rt_memset_neon` | Coq verify: Rocq 9.2, then `make verify` |
+| `verify` | `rt_memset_neon` | `verify/models/MemsetNeon.v` via `make verify` on Rocq 9.2 |
 
 Local equivalents:
 
@@ -27,7 +27,7 @@ make security
 make verify
 
 # i386
-sh verify/qemu.sh all          # Linux x86_64 + multilib
+sh scripts/qemu.sh all         # Linux x86_64 + multilib
 
 # cross NEON (Linux)
 aarch64-linux-gnu-gcc … && qemu-aarch64 ./test_host_a64

@@ -3,7 +3,7 @@
 sqcsa_update.py — Security and Quality Code Static Analysis updater.
 
 Usage:
-    python3 tools/sqcsa_update.py <rel-folder> [<rel-folder> ...]
+    python3 scripts/sqcsa_update.py <rel-folder> [<rel-folder> ...]
 
 Each <rel-folder> is a path relative to the project root, e.g.:
     src/common/scalar
@@ -19,7 +19,7 @@ doc/txt/SQCSA.txt, or appends a new block when none exists, and updates the
 summary table row for that target.
 
 Run from anywhere:
-    python3 tools/sqcsa_update.py src/common/scalar verify
+    python3 scripts/sqcsa_update.py src/common/scalar verify
 """
 
 import argparse
@@ -38,9 +38,10 @@ INCLUDE_EXTRAS = {
     "src/common/scalar": [],
 }
 
-# Files passed instead of the directory, so verify/build is not a translation unit.
+# Files passed instead of the directory, so build/ and verify/.cache
+# are not translation units.
 FILE_LISTS = {
-    "verify": ["verify/test_host.c", "verify/test_mem.c"],
+    "verify": ["verify/suite/test_host.c", "verify/suite/test_mem.c"],
 }
 
 SEC_CFLAGS = [

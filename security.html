@@ -160,8 +160,8 @@
             </tr>
             <tr>
               <td data-label="Target"><code>sec-verify</code></td>
-              <td data-label="Files"><code>verify/test_host.c</code>, <code>verify/test_mem.c</code></td>
-              <td data-label="Outside"><code>verify/build</code> and <code>verify/.cache</code></td>
+              <td data-label="Files"><code>verify/suite/test_host.c</code>, <code>verify/suite/test_mem.c</code></td>
+              <td data-label="Outside"><code>verify/.cache</code>, and the top-level <code>build/</code> directory</td>
             </tr>
           </tbody>
         </table>
@@ -212,7 +212,7 @@
               <td data-label="Now">A null format is an empty format. <code>p</code> is set after that replacement. The oracle checks <code>rt_snprintf(buf, n, NULL)</code> returns 0 and writes a NUL when <code>n &gt; 0</code>.</td>
             </tr>
             <tr>
-              <td data-label="Site"><code>verify/test_host.c</code> strcpy row</td>
+              <td data-label="Site"><code>verify/suite/test_host.c</code> strcpy row</td>
               <td data-label="Finding">Flawfinder level 4 on <code>strcpy</code>.</td>
               <td data-label="Now">The libc side is <code>memcpy</code> of a counted length. The buffer is 512 bytes with the NUL in the last byte, so the count is the write <code>strcpy</code> would have made. <code>rt_strcpy</code> is still the function under test.</td>
             </tr>
@@ -230,7 +230,7 @@
         </table>
         <figcaption>
           <span><b>Record</b> — doc/txt/SQCSA.txt</span>
-          <span>python3 tools/sqcsa_update.py src/common/scalar verify</span>
+          <span>python3 scripts/sqcsa_update.py src/common/scalar verify</span>
         </figcaption>
       </figure>
     </div>
@@ -261,7 +261,7 @@
           <li><strong>Display name</strong><span>SQCSA Test Suite</span></li>
           <li><strong>Runner</strong><span><code>ubuntu-24.04</code></span></li>
           <li><strong>Step</strong><span><code>make security</code></span></li>
-          <li><strong>Updater</strong><span><code>tools/sqcsa_update.py</code> rewrites the per-module blocks and the summary table in <code>doc/txt/SQCSA.txt</code>. It does not rewrite the narrative sections.</span></li>
+          <li><strong>Updater</strong><span><code>scripts/sqcsa_update.py</code> rewrites the per-module blocks and the summary table in <code>doc/txt/SQCSA.txt</code>. It does not rewrite the narrative sections.</span></li>
         </ul>
         <figcaption>
           <span><b>CI</b> — the job name is the check</span>

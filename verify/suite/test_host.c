@@ -1,5 +1,10 @@
 #define _POSIX_C_SOURCE 200809L
-/* Host libc vs rt — timed ns columns + improvement coefficient + colored groups. */
+/* Host libc vs rt — timed ns columns + improvement coefficient + colored groups.
+   Untimed checks are the contract a later proof may treat as the spec.
+   Each one requires the return value, the bytes that must change, and the
+   bytes that must not. memcmp is sign only, on unsigned bytes.
+   The strcpy timing column copies a counted buffer. Its checks are strcpy.
+*/
 #include "rt/mem.h"
 #include "rt/string.h"
 #include "rt/stdlib.h"
@@ -73,6 +78,22 @@ static void poison(unsigned char *p, size_t n)
 static int same_mem(const void *a, const void *b, size_t n)
 {
     return n == 0 || memcmp(a, b, n) == 0;
+}
+
+static int canary_ok(const unsigned char *p, size_t begin, size_t end)
+{
+    size_t i;
+    if (begin > BUF || end > BUF)
+        return 0;
+    for (i = 0; i < begin; i++) {
+        if (p[i] != (unsigned char)(0xA5 ^ (unsigned)(i * 17u)))
+            return 0;
+    }
+    for (i = end; i < BUF; i++) {
+        if (p[i] != (unsigned char)(0xA5 ^ (unsigned)(i * 17u)))
+            return 0;
+    }
+    return 1;
 }
 
 static int sign_eq(int x, int y)
@@ -286,29 +307,48 @@ static void bench_memcpy(struct row *r, copy_fn rt_fn)
     unsigned char *src = g_b + PAD;
     size_t i, k;
     uint64_t t0, t1;
-    void *ret;
+    static const size_t lens[] = {
+        0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+        63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512,
+        1000, 4096
+    };
 
-    for (i = 0; i < N; i++)
-        src[i] = (unsigned char)(rnd() & 0xFFu);
-
-    /* correctness sweep (untimed) */
+    /* correctness sweep (untimed): return, bytes, both canaries, source intact */
     {
-        static const size_t lens[] = { 0, 1, 3, 7, 8, 16, 32, 64, 100, 256, 1024, 4096 };
-        size_t li, da;
+        size_t li, da, sa;
         for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
             size_t n = lens[li];
-            for (da = 0; da <= 8; da++) {
-                unsigned char *d = g_a + PAD + da;
-                unsigned char *s = g_b + PAD;
-                unsigned char *o = g_c + PAD + da;
-                if (PAD + da + n + 8 >= BUF) continue;
-                poison(g_a, BUF);
-                memcpy(o, s, n);
-                ret = rt_fn(d, s, n);
-                row_add(r, ret == d && same_mem(d, o, n));
+            size_t da_step = n < 64 ? 1 : 8;
+            size_t sa_step = n < 64 ? 1 : 8;
+            for (da = 0; da <= 32; da += da_step) {
+                for (sa = 0; sa <= 16; sa += sa_step) {
+                    unsigned char *d = g_a + PAD + da;
+                    unsigned char *s = g_b + PAD + sa;
+                    unsigned char *o = g_c + PAD + da;
+                    void *ret;
+                    if (PAD + da + n + 8 >= BUF || PAD + sa + n + 8 >= BUF) {
+                        row_add(r, 0);
+                        continue;
+                    }
+                    poison(g_a, BUF);
+                    poison(g_b, BUF);
+                    poison(g_c, BUF);
+                    for (i = 0; i < n; i++)
+                        s[i] = (unsigned char)(0x5A ^ (unsigned)(i * 19u));
+                    memcpy(o, s, n);
+                    ret = rt_fn(d, s, n);
+                    row_add(r, ret == d);
+                    row_add(r, same_mem(d, o, n));
+                    row_add(r, canary_ok(g_a, (size_t)(d - g_a), (size_t)(d - g_a) + n));
+                    row_add(r, canary_ok(g_b, (size_t)(s - g_b), (size_t)(s - g_b) + n)
+                            && same_mem(s, o, n));
+                }
             }
         }
     }
+
+    for (i = 0; i < N; i++)
+        src[i] = (unsigned char)(rnd() & 0xFFu);
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -341,26 +381,84 @@ static void bench_memmove(struct row *r, copy_fn rt_fn)
     size_t i, k;
     uint64_t t0, t1;
 
-    for (i = 0; i < N + 64; i++)
-        base[i] = (unsigned char)(rnd() & 0xFFu);
-
-    /* correctness */
+    /* Both overlap directions, exact overlap, and a non-overlapping gap.
+       The whole buffer must match libc, so a write past the window fails. */
     {
-        size_t n, off;
-        for (n = 0; n <= 256; n = n ? n * 2 : 1) {
-            for (off = 1; off <= 8; off++) {
-                size_t total = n + off;
-                unsigned char *b = g_a + PAD;
-                unsigned char *ref = g_c + PAD;
-                void *ret;
-                for (i = 0; i < total; i++)
-                    b[i] = ref[i] = (unsigned char)(30 + i);
-                memmove(ref + off, ref, n);
-                ret = rt_fn(b + off, b, n);
-                row_add(r, ret == b + off && same_mem(b, ref, total));
+        static const size_t lens[] = {
+            0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33,
+            63, 64, 65, 127, 128, 255, 256
+        };
+        static const size_t offs[] = { 0, 1, 2, 3, 7, 8, 15, 16, 31 };
+        size_t li, oi;
+        for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+            size_t n = lens[li];
+            for (oi = 0; oi < sizeof offs / sizeof offs[0]; oi++) {
+                size_t off = offs[oi];
+                int above;
+                if (PAD + n + off + 8 >= BUF) {
+                    row_add(r, 0);
+                    continue;
+                }
+                for (above = 0; above < 2; above++) {
+                    unsigned char *win = g_a + PAD;
+                    unsigned char *src;
+                    unsigned char *dst;
+                    void *ret;
+                    if (!above && off == 0)
+                        continue;
+                    poison(g_a, BUF);
+                    poison(g_c, BUF);
+                    for (i = 0; i < n + off; i++)
+                        win[i] = (unsigned char)(0x40 + (unsigned)((i * 3u) & 0xFFu));
+                    memcpy(g_c, g_a, BUF);
+                    if (above) {
+                        dst = win + off;
+                        src = win;
+                    } else {
+                        dst = win;
+                        src = win + off;
+                    }
+                    memmove(g_c + (dst - g_a), g_c + (src - g_a), n);
+                    ret = rt_fn(dst, src, n);
+                    row_add(r, ret == dst && same_mem(g_a, g_c, BUF));
+                }
+            }
+            if (n < 2000) {
+                size_t gap;
+                for (gap = 1; gap <= 16; gap += 15) {
+                    unsigned char *win = g_a + PAD;
+                    unsigned char *src = win;
+                    unsigned char *dst = win + n + gap;
+                    void *ret;
+                    if (PAD + n + gap + n + 8 >= BUF) {
+                        row_add(r, 0);
+                        continue;
+                    }
+                    poison(g_a, BUF);
+                    poison(g_c, BUF);
+                    for (i = 0; i < n + gap + n; i++)
+                        win[i] = (unsigned char)(0x20 + (unsigned)(i & 0xFFu));
+                    memcpy(g_c, g_a, BUF);
+                    memmove(g_c + (dst - g_a), g_c + (src - g_a), n);
+                    ret = rt_fn(dst, src, n);
+                    row_add(r, ret == dst && same_mem(g_a, g_c, BUF));
+                    src = win + n + gap;
+                    dst = win;
+                    poison(g_a, BUF);
+                    poison(g_c, BUF);
+                    for (i = 0; i < n + gap + n; i++)
+                        win[i] = (unsigned char)(0x21 + (unsigned)(i & 0xFFu));
+                    memcpy(g_c, g_a, BUF);
+                    memmove(g_c + (dst - g_a), g_c + (src - g_a), n);
+                    ret = rt_fn(dst, src, n);
+                    row_add(r, ret == dst && same_mem(g_a, g_c, BUF));
+                }
             }
         }
     }
+
+    for (i = 0; i < N + 64; i++)
+        base[i] = (unsigned char)(rnd() & 0xFFu);
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -390,23 +488,42 @@ static void bench_memset(struct row *r, set_fn rt_fn)
 {
     enum { N = 4096, LOOPS = ITER_MEM };
     unsigned char *dst = g_a + PAD;
-    size_t k;
+    size_t i, k;
     uint64_t t0, t1;
-    void *ret;
 
     {
-        static const size_t lens[] = { 0, 1, 8, 16, 64, 256, 1024 };
+        static const size_t lens[] = {
+            0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+            63, 64, 65, 127, 128, 129, 255, 256, 257, 511, 512,
+            1000, 4096
+        };
+        static const int fills[] = { 0, 1, 0x7F, 0x80, 0xFF, -1, 256 + 65 };
         size_t li, da;
+        int fi;
         for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
-            for (da = 0; da <= 8; da++) {
-                unsigned char *d = g_a + PAD + da;
-                unsigned char *o = g_c + PAD + da;
-                size_t n = lens[li];
-                if (PAD + da + n + 8 >= BUF) continue;
-                poison(g_a, BUF);
-                memset(o, 0x5A, n);
-                ret = rt_fn(d, 0x5A, n);
-                row_add(r, ret == d && same_mem(d, o, n));
+            size_t n = lens[li];
+            size_t da_step = n < 64 ? 1 : 8;
+            for (fi = 0; fi < (int)(sizeof fills / sizeof fills[0]); fi++) {
+                int c = fills[fi];
+                unsigned char uc = (unsigned char)c;
+                for (da = 0; da <= 32; da += da_step) {
+                    unsigned char *d = g_a + PAD + da;
+                    void *ret;
+                    int bytes_ok = 1;
+                    if (PAD + da + n + 8 >= BUF) {
+                        row_add(r, 0);
+                        continue;
+                    }
+                    poison(g_a, BUF);
+                    ret = rt_fn(d, c, n);
+                    for (i = 0; i < n; i++) {
+                        if (d[i] != uc)
+                            bytes_ok = 0;
+                    }
+                    row_add(r, ret == d);
+                    row_add(r, bytes_ok);
+                    row_add(r, canary_ok(g_a, (size_t)(d - g_a), (size_t)(d - g_a) + n));
+                }
             }
         }
     }
@@ -444,13 +561,69 @@ static void bench_memcmp(struct row *r, cmp_fn rt_fn)
     uint64_t t0, t1;
     volatile int sink = 0;
 
+    /* Sign of the unsigned difference, including the high bit. No writes. */
+    {
+        static const size_t lens[] = {
+            0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 63, 64, 65, 127, 128, 255, 256, 4096
+        };
+        static const unsigned char pairs[][2] = {
+            { 0x00, 0x00 },
+            { 0x00, 0x01 },
+            { 0x01, 0x00 },
+            { 0x7F, 0x80 },
+            { 0x80, 0x7F },
+            { 0xFF, 0x00 },
+            { 0x00, 0xFF }
+        };
+        size_t li, pi, da;
+        for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+            size_t n = lens[li];
+            for (da = 0; da <= 16; da += (n < 64 ? 1 : 8)) {
+                unsigned char *ap = g_a + PAD + da;
+                unsigned char *bp = g_b + PAD + da;
+                size_t at;
+                if (PAD + da + n + 8 >= BUF || n > BUF / 2) {
+                    row_add(r, 0);
+                    continue;
+                }
+                poison(g_a, BUF);
+                poison(g_b, BUF);
+                for (i = 0; i < n; i++)
+                    ap[i] = bp[i] = (unsigned char)(0x30 + (i * 13u) % 200u);
+                memcpy(g_c, ap, n);
+                memcpy(g_c + n, bp, n);
+                row_add(r, sign_eq(rt_fn(ap, bp, n), memcmp(ap, bp, n))
+                        && same_mem(ap, g_c, n) && same_mem(bp, g_c + n, n)
+                        && canary_ok(g_a, PAD + da, PAD + da + n)
+                        && canary_ok(g_b, PAD + da, PAD + da + n));
+                if (!n)
+                    continue;
+                for (at = 0; at < n; at += (n > 3 ? n - 1 : 1)) {
+                    bp[at] ^= 0xFFu;
+                    memcpy(g_c, ap, n);
+                    memcpy(g_c + n, bp, n);
+                    row_add(r, sign_eq(rt_fn(ap, bp, n), memcmp(ap, bp, n))
+                            && same_mem(ap, g_c, n) && same_mem(bp, g_c + n, n));
+                    bp[at] ^= 0xFFu;
+                }
+                for (pi = 0; pi < sizeof pairs / sizeof pairs[0]; pi++) {
+                    ap[0] = pairs[pi][0];
+                    bp[0] = pairs[pi][1];
+                    row_add(r, sign_eq(rt_fn(ap, bp, n), memcmp(ap, bp, n)));
+                    ap[n - 1] = pairs[pi][0];
+                    bp[n - 1] = pairs[pi][1];
+                    ap[0] = (unsigned char)0x30;
+                    bp[0] = (unsigned char)0x30;
+                    row_add(r, sign_eq(rt_fn(ap, bp, n), memcmp(ap, bp, n)));
+                    ap[n - 1] = (unsigned char)(0x30 + ((n - 1) * 13u) % 200u);
+                    bp[n - 1] = ap[n - 1];
+                }
+            }
+        }
+    }
+
     for (i = 0; i < N; i++)
         a[i] = b[i] = (unsigned char)(i & 0xFFu);
-    b[N / 2] ^= 1;
-
-    row_add(r, sign_eq(rt_fn(a, b, N), memcmp(a, b, N)));
-    b[N / 2] ^= 1;
-    row_add(r, sign_eq(rt_fn(a, b, N), memcmp(a, b, N)));
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -509,13 +682,30 @@ static void bench_strlen_fn(struct row *r, strlen_fn fn)
 
     for (i = 0; i < 1024; i++)
         s[i] = (char)('a' + (i % 26));
+    s[100] = (char)0x80;
+    s[101] = (char)0xFF;
     s[1024] = 0;
 
-    row_add(r, fn(s) == strlen(s));
+    /* Length is the first 0 byte. 0x80 and 0xFF are not terminators.
+       Offsets catch a word or NEON load that starts only on an alignment. */
+    {
+        static char buf[8192];
+        size_t len, al;
+        for (len = 0; len <= 64; len++) {
+            for (al = 0; al <= 32; al++) {
+                size_t j;
+                for (j = 0; j < al + len + 64; j++)
+                    buf[j] = (char)(0x41 + (j & 15));
+                if (len)
+                    buf[al + len - 1] = (char)0xFF;
+                buf[al + len] = 0;
+                row_add(r, fn(buf + al) == len);
+            }
+        }
+    }
+    row_add(r, fn(s) == 1024);
+    row_add(r, fn(s + 1) == 1023);
     row_add(r, fn("") == 0);
-    row_add(r, fn("a") == 1);
-    row_add(r, fn("0123456789abcdef") == 16); /* exactly one NEON block */
-    row_add(r, fn("0123456789abcdefZ") == 17);
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -556,6 +746,47 @@ static void bench_strcmp_fn(struct row *r, strcmp_fn fn)
     b[200] = 'z';
 
     row_add(r, sign_eq(fn(a, b), strcmp(a, b)));
+    row_add(r, sign_eq(fn(a, a), 0));
+    {
+        char e1[1], e2[1], p1[8], p2[8], q1[2], q2[2];
+        char h1[2], h2[2];
+        e1[0] = 0;
+        e2[0] = 0;
+        memcpy(p1, "abc", 4);
+        memcpy(p2, "abcd", 5);
+        q1[0] = 'b';
+        q1[1] = 0;
+        q2[0] = 'a';
+        q2[1] = 0;
+        h1[0] = (char)0x80;
+        h1[1] = 0;
+        h2[0] = (char)0x7F;
+        h2[1] = 0;
+        row_add(r, sign_eq(fn(e1, e2), strcmp(e1, e2)));
+        row_add(r, sign_eq(fn(p1, p2), strcmp(p1, p2)));
+        row_add(r, sign_eq(fn(p2, p1), strcmp(p2, p1)));
+        row_add(r, sign_eq(fn(q1, q2), strcmp(q1, q2)));
+        /* Unsigned char order. A signed subtract gets 0x80 and 0x7F backwards. */
+        row_add(r, sign_eq(fn(h1, h2), strcmp(h1, h2)));
+        row_add(r, sign_eq(fn(h2, h1), strcmp(h2, h1)));
+        h1[0] = (char)0xFF;
+        h2[0] = 1;
+        row_add(r, sign_eq(fn(h1, h2), strcmp(h1, h2)));
+        row_add(r, sign_eq(fn(h2, h1), strcmp(h2, h1)));
+    }
+    {
+        char ua[128], ub[128];
+        size_t al;
+        for (al = 0; al <= 15; al++) {
+            memset(ua, 'a', sizeof ua);
+            memset(ub, 'a', sizeof ub);
+            ua[al + 20] = 0;
+            ub[al + 20] = 0;
+            ub[al + 19] = (char)0xFF;
+            row_add(r, sign_eq(fn(ua + al, ub + al), strcmp(ua + al, ub + al)));
+            row_add(r, sign_eq(fn(ub + al, ua + al), strcmp(ub + al, ua + al)));
+        }
+    }
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -600,6 +831,26 @@ static void bench_strchr_fn(struct row *r, strchr_fn fn)
     row_add(r, fn(s, 0) == strchr(s, 0));
     row_add(r, fn("", 'a') == strchr("", 'a'));
     row_add(r, fn("x", 'x') == strchr("x", 'x'));
+    /* c is converted to unsigned char. 256 + 'Z' is the 'Z' at s[400]. */
+    row_add(r, fn(s, 256 + 'Z') == s + 400);
+    row_add(r, fn(s, 256) == s + 511);
+    {
+        char hi[32];
+        size_t al;
+        memset(hi, 'b', sizeof hi);
+        hi[31] = 0;
+        hi[8] = (char)0xFF;
+        row_add(r, fn(hi, 0xFF) == hi + 8);
+        row_add(r, fn(hi, 256 + 0xFF) == hi + 8);
+        for (al = 0; al <= 15; al++) {
+            char buf[64];
+            memset(buf, 'c', sizeof buf);
+            buf[al + 10] = 'Z';
+            buf[al + 24] = 0;
+            row_add(r, fn(buf + al, 'Z') == buf + al + 10);
+            row_add(r, fn(buf + al, 'Q') == 0);
+        }
+    }
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -649,9 +900,33 @@ static void bench_strcpy(struct row *r)
     }
     ncopy++;
 
-    memcpy(da, src, ncopy);
-    rt_strcpy(db, src);
-    row_add(r, memcmp(da, db, ncopy) == 0);
+    /* strcpy writes strlen bytes plus the NUL and returns dst.
+       Bytes past that NUL stay as they were. */
+    {
+        char tiny[96];
+        size_t len;
+        static const size_t lens[] = { 0, 1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 33 };
+        for (len = 0; len < sizeof lens / sizeof lens[0]; len++) {
+            char raw[96];
+            size_t n = lens[len];
+            size_t j;
+            char *ret;
+            for (j = 0; j < n; j++)
+                raw[j] = (j == n - 1 && n) ? (char)0xFF : (char)('A' + (j % 26));
+            if (n)
+                raw[n - 1] = (n > 1) ? (char)0xFF : 'A';
+            raw[n] = 0;
+            memset(tiny, 0xA5, sizeof tiny);
+            memset(da, 0xA5, sizeof da);
+            memcpy(da, raw, n + 1);
+            ret = rt_strcpy(tiny, raw);
+            row_add(r, ret == tiny && memcmp(tiny, da, sizeof tiny) == 0);
+        }
+        memset(db, 0xA5, sizeof db);
+        memset(da, 0xA5, sizeof da);
+        memcpy(da, src, ncopy);
+        row_add(r, rt_strcpy(db, src) == db && memcmp(db, da, sizeof db) == 0);
+    }
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -692,6 +967,23 @@ static void bench_strstr(struct row *r)
     hay[1023] = 0;
 
     row_add(r, rt_strstr(hay, nd) == strstr(hay, nd));
+    row_add(r, rt_strstr(hay, "") == hay);
+    row_add(r, rt_strstr(hay, "no-such-needle") == 0);
+    {
+        const char *at = "needle-at-start";
+        row_add(r, rt_strstr(at, "needle") == at);
+    }
+    row_add(r, rt_strstr("xxneedle", "needle") == strstr("xxneedle", "needle"));
+    row_add(r, rt_strstr("aaaab", "aaab") == strstr("aaaab", "aaab"));
+    row_add(r, rt_strstr("ababcabcd", "abc") == strstr("ababcabcd", "abc"));
+    row_add(r, rt_strstr("", "") == strstr("", ""));
+    row_add(r, rt_strstr("", "a") == 0);
+    row_add(r, rt_strstr("abc", "abcd") == 0);
+    {
+        char hi[16];
+        memcpy(hi, "a\377b", 4);
+        row_add(r, rt_strstr(hi, "\377b") == hi + 1);
+    }
 
     {
         uint64_t lc[SAMPLES], rt_t[SAMPLES];
@@ -726,6 +1018,17 @@ static void exercise_strings_misc(void)
     r = row_begin("strnlen", "scalar", GRP_STRING);
     for (n = 0; n <= 20; n++)
         row_add(r, rt_strnlen("abcdefghijklmnop", n) == (size_t)strnlen("abcdefghijklmnop", n));
+    {
+        char hi[4];
+        hi[0] = 'a';
+        hi[1] = (char)0xFF;
+        hi[2] = 'b';
+        hi[3] = 0;
+        row_add(r, rt_strnlen(hi, 10) == 3);
+        row_add(r, rt_strnlen(hi, 1) == 1);
+        row_add(r, rt_strnlen("", 5) == 0);
+        row_add(r, rt_strnlen("abc", 0) == 0);
+    }
     /* tiny timing */
     {
         uint64_t t0, t1;
@@ -745,15 +1048,47 @@ static void exercise_strings_misc(void)
     r = row_begin("strscpy", "scalar", GRP_STRING);
     {
         const char *src = "abcdefghij";
+        size_t srclen = strlen(src);
         for (n = 0; n <= 16; n++) {
             char dst[32];
-            size_t got, srclen = strlen(src), expect;
+            size_t got, i, expect;
+            int pref = 1, tail = 1;
             memset(dst, 0xCC, 32);
             got = rt_strscpy(dst, src, n);
             row_add(r, got == srclen);
-            if (n == 0) continue;
+            if (n == 0) {
+                for (i = 0; i < 32; i++) {
+                    if ((unsigned char)dst[i] != 0xCC)
+                        tail = 0;
+                }
+                row_add(r, tail);
+                continue;
+            }
             expect = (n - 1) < srclen ? (n - 1) : srclen;
-            row_add(r, dst[expect] == '\0');
+            for (i = 0; i < expect; i++) {
+                if (dst[i] != src[i])
+                    pref = 0;
+            }
+            if (dst[expect] != '\0')
+                pref = 0;
+            for (i = expect + 1; i < 32; i++) {
+                if ((unsigned char)dst[i] != 0xCC)
+                    tail = 0;
+            }
+            row_add(r, pref && tail);
+        }
+        {
+            char src2[4];
+            char dst[8];
+            src2[0] = 'Q';
+            src2[1] = (char)0xFF;
+            src2[2] = 'Z';
+            src2[3] = 0;
+            memset(dst, 0xCC, 8);
+            row_add(r, rt_strscpy(dst, src2, 8) == 3);
+            row_add(r, dst[0] == 'Q' && (unsigned char)dst[1] == 0xFF
+                    && dst[2] == 'Z' && dst[3] == '\0'
+                    && (unsigned char)dst[4] == 0xCC);
         }
         if (r) { r->libc_ns = 1; r->rt_ns = 1; } /* no libc strscpy */
     }
@@ -796,6 +1131,100 @@ static int icmp(const void *a, const void *b)
     return (x > y) - (x < y);
 }
 
+static long end_off(const char *s, const char *e)
+{
+    const char *p;
+    long off = 0;
+    if (!e)
+        return -1;
+    for (p = s; ; p++, off++) {
+        if (p == e)
+            return off;
+        if (*p == '\0')
+            return -1;
+    }
+}
+
+/* Value and end pointer, including a rejected 0x prefix and overflow. */
+static int ul_ok(const char *s, int base)
+{
+    char *e1 = 0, *e2 = 0;
+    unsigned long a = rt_strtoul(s, &e1, base);
+    unsigned long b = strtoul(s, &e2, base);
+    long o1 = end_off(s, e1);
+    long o2 = end_off(s, e2);
+    if (a == b && o1 >= 0 && o1 == o2)
+        return 1;
+    printf("strtoul \"%s\" base %d: rt %lu end %ld, libc %lu end %ld\n",
+           s, base, a, o1, b, o2);
+    return 0;
+}
+
+static int ull_ok(const char *s, int base)
+{
+    char *e1 = 0, *e2 = 0;
+    unsigned long long a = rt_strtoull(s, &e1, base);
+    unsigned long long b = strtoull(s, &e2, base);
+    long o1 = end_off(s, e1);
+    long o2 = end_off(s, e2);
+    if (a == b && o1 >= 0 && o1 == o2)
+        return 1;
+    printf("strtoull \"%s\" base %d: rt %llu end %ld, libc %llu end %ld\n",
+           s, base, a, o1, b, o2);
+    return 0;
+}
+
+static int sorted_ints(const int *v, size_t n)
+{
+    size_t i;
+    for (i = 1; i < n; i++) {
+        if (v[i - 1] > v[i])
+            return 0;
+    }
+    return 1;
+}
+
+/* Sorted output must be the same multiset. Tie order is not libc's order. */
+static int same_multiset(const int *orig, const int *sorted, size_t n)
+{
+    size_t i, j;
+    unsigned char used[1024];
+    if (n > sizeof used)
+        return 0;
+    for (i = 0; i < n; i++)
+        used[i] = 0;
+    for (i = 0; i < n; i++) {
+        int found = 0;
+        for (j = 0; j < n; j++) {
+            if (!used[j] && orig[j] == sorted[i]) {
+                used[j] = 1;
+                found = 1;
+                break;
+            }
+        }
+        if (!found)
+            return 0;
+    }
+    return 1;
+}
+
+static int f32_is(float x, const char *expect)
+{
+    char buf[64];
+    size_t i, el;
+    int n;
+    memset(buf, 0xA5, sizeof buf);
+    n = rt_fmt_f32(buf, sizeof buf, x);
+    el = strlen(expect);
+    if (n < 0 || (size_t)n != el || strcmp(buf, expect) != 0)
+        return 0;
+    for (i = el + 1; i < sizeof buf; i++) {
+        if ((unsigned char)buf[i] != 0xA5)
+            return 0;
+    }
+    return 1;
+}
+
 static void run_numeric(void)
 {
     struct row *r;
@@ -806,8 +1235,11 @@ static void run_numeric(void)
 
     r = row_begin("atoi", "scalar", GRP_NUMERIC);
     {
-        static const char *s[] = { "0", "42", "-7", "  99", "2147483647", "-2147483648" };
-        for (i = 0; i < 6; i++)
+        static const char *s[] = {
+            "0", "42", "-7", "  99", "2147483647", "-2147483648",
+            "", "+42", "  -12", "42abc", "+", "  +0"
+        };
+        for (i = 0; i < sizeof s / sizeof s[0]; i++)
             row_add(r, rt_atoi(s[i]) == atoi(s[i]));
         t0 = now_ns();
         for (k = 0; k < ITER_STR; k++) sink += atoi("123456");
@@ -821,9 +1253,20 @@ static void run_numeric(void)
 
     r = row_begin("strtoul", "scalar", GRP_NUMERIC);
     {
-        char *e1, *e2;
-        row_add(r, rt_strtoul("0xff", &e1, 16) == strtoul("0xff", &e2, 16));
-        row_add(r, rt_strtoul("077", &e1, 8) == strtoul("077", &e2, 8));
+        row_add(r, ul_ok("0", 10));
+        row_add(r, ul_ok("42", 10));
+        row_add(r, ul_ok("  42", 10));
+        row_add(r, ul_ok("42abc", 10));
+        row_add(r, ul_ok("", 10));
+        row_add(r, ul_ok("-1", 10));
+        row_add(r, ul_ok("0x10", 0));
+        row_add(r, ul_ok("010", 0));
+        row_add(r, ul_ok("10", 0));
+        row_add(r, ul_ok("0xff", 16));
+        row_add(r, ul_ok("077", 8));
+        row_add(r, ul_ok("0x", 16));
+        row_add(r, ul_ok("0xG", 16));
+        row_add(r, ul_ok("18446744073709551616", 10));
         t0 = now_ns();
         for (k = 0; k < ITER_STR; k++) sink += (long)strtoul("12345678", 0, 10);
         t1 = now_ns();
@@ -836,8 +1279,12 @@ static void run_numeric(void)
 
     r = row_begin("strtoull", "scalar", GRP_NUMERIC);
     {
-        row_add(r, rt_strtoull("1234567890123", 0, 10) == strtoull("1234567890123", 0, 10));
-        row_add(r, rt_strtoull("0xDeadBeef", 0, 0) == strtoull("0xDeadBeef", 0, 0));
+        row_add(r, ull_ok("1234567890123", 10));
+        row_add(r, ull_ok("0xDeadBeef", 0));
+        row_add(r, ull_ok("0x", 16));
+        row_add(r, ull_ok("-1", 10));
+        row_add(r, ull_ok("18446744073709551616", 10));
+        row_add(r, ull_ok("18446744073709551615", 10));
         t0 = now_ns();
         for (k = 0; k < ITER_STR; k++) sink += (long)strtoull("0x123456789", 0, 0);
         t1 = now_ns();
@@ -868,18 +1315,26 @@ static void run_sort(void)
         for (k = 0; k < n; k++)
             a[k] = c[k] = (int)(rnd() % 1000u) - 500;
         rt_qsort_neo(a, n, sizeof(int), icmp);
-        qsort(c, n, sizeof(int), icmp);
-        row_add(r, memcmp(a, c, n * sizeof(int)) == 0);
+        row_add(r, sorted_ints(a, n) && same_multiset(c, a, n));
     }
-    /* patterns: already sorted, reversed, random */
-    for (k = 0; k < (size_t)N; k++) b[k] = (int)k;
+    for (k = 0; k < (size_t)N; k++)
+        c[k] = b[k] = (int)k;
     rt_qsort_neo(b, (size_t)N, sizeof(int), icmp);
-    row_add(r, 1);
-    for (k = 0; k < (size_t)N; k++) b[k] = (int)((size_t)N - k);
+    row_add(r, sorted_ints(b, (size_t)N) && same_multiset(c, b, (size_t)N));
+    for (k = 0; k < (size_t)N; k++)
+        c[k] = b[k] = (int)((size_t)N - k);
     rt_qsort_neo(b, (size_t)N, sizeof(int), icmp);
-    for (k = 1; k < (size_t)N; k++)
-        if (b[k-1] > b[k]) { row_add(r, 0); break; }
-    if (k == (size_t)N) row_add(r, 1);
+    row_add(r, sorted_ints(b, (size_t)N) && same_multiset(c, b, (size_t)N));
+    for (k = 0; k < (size_t)N; k++)
+        c[k] = b[k] = 7;
+    rt_qsort_neo(b, (size_t)N, sizeof(int), icmp);
+    row_add(r, sorted_ints(b, (size_t)N) && same_multiset(c, b, (size_t)N));
+    b[0] = 3;
+    b[1] = 1;
+    rt_qsort_neo(b, 2, 0, icmp);
+    row_add(r, b[0] == 3 && b[1] == 1);
+    rt_qsort_neo(b, 1, sizeof(int), icmp);
+    row_add(r, b[0] == 3);
 
     for (k = 0; k < (size_t)N; k++)
         a[k] = b[k] = (int)(rnd() % 100000u);
@@ -926,11 +1381,35 @@ static void run_format(void)
     ra = rt_snprintf(a, sizeof a, "%05d %-5s", 7, "ab");
     rb = snprintf(b, sizeof b, "%05d %-5s", 7, "ab");
     row_add(r, ra == rb && strcmp(a, b) == 0);
+    ra = rt_snprintf(a, sizeof a, "%% %u %d", 0u, -42);
+    rb = snprintf(b, sizeof b, "%% %u %d", 0u, -42);
+    row_add(r, ra == rb && strcmp(a, b) == 0);
+    ra = rt_snprintf(a, sizeof a, "%.2s", "abcd");
+    rb = snprintf(b, sizeof b, "%.2s", "abcd");
+    row_add(r, ra == rb && strcmp(a, b) == 0);
+    memset(a, 0xA5, sizeof a);
+    ra = rt_snprintf(a, 0, "hi");
+    {
+        int same = 1;
+        size_t bi;
+        for (bi = 0; bi < sizeof a; bi++) {
+            if ((unsigned char)a[bi] != 0xA5)
+                same = 0;
+        }
+        row_add(r, ra == 2 && same);
+    }
+    memset(a, 0xA5, sizeof a);
+    ra = rt_snprintf(a, 1, "hi");
+    row_add(r, ra == 2 && a[0] == '\0' && (unsigned char)a[1] == 0xA5);
+    memset(a, 0xA5, sizeof a);
     ra = rt_snprintf(a, 5, "abcdefgh");
-    row_add(r, ra == 8 && strcmp(a, "abcd") == 0);
-    a[0] = 'X';
+    row_add(r, ra == 8 && strcmp(a, "abcd") == 0 && (unsigned char)a[5] == 0xA5);
+    memset(a, 0xA5, sizeof a);
+    ra = rt_snprintf(a, sizeof a, "%s", (const char *)0);
+    row_add(r, ra == 6 && strcmp(a, "(null)") == 0);
+    memset(a, 0xA5, sizeof a);
     ra = rt_snprintf(a, sizeof a, NULL);
-    row_add(r, ra == 0 && a[0] == '\0');
+    row_add(r, ra == 0 && a[0] == '\0' && (unsigned char)a[1] == 0xA5);
 
     t0 = now_ns();
     for (k = 0; k < ITER_FMT; k++)
@@ -946,12 +1425,31 @@ static void run_format(void)
 
     r = row_begin("fmt_f32", "scalar", GRP_FORMAT);
     {
-        float vals[] = { 0.0f, 1.0f, -2.5f, 3.141592f };
-        size_t vi;
-        for (vi = 0; vi < 4; vi++) {
-            char fb[64];
-            row_add(r, rt_fmt_f32(fb, sizeof fb, vals[vi]) > 0);
+        union { uint32_t u; float f; } bits;
+        char small[16];
+        int n;
+        size_t bi;
+        int tail = 1;
+        row_add(r, f32_is(0.0f, "0.000000"));
+        row_add(r, f32_is(1.0f, "1.000000"));
+        row_add(r, f32_is(-2.5f, "-2.500000"));
+        row_add(r, f32_is(0.5f, "0.500000"));
+        row_add(r, f32_is(10.0f, "10.000000"));
+        bits.u = 0x80000000u;
+        row_add(r, f32_is(bits.f, "-0.000000"));
+        bits.u = 0x7f800000u;
+        row_add(r, f32_is(bits.f, "inf"));
+        bits.u = 0xff800000u;
+        row_add(r, f32_is(bits.f, "-inf"));
+        bits.u = 0x7fc00000u;
+        row_add(r, f32_is(bits.f, "nan"));
+        memset(small, 0xA5, sizeof small);
+        n = rt_fmt_f32(small, 4, 1.0f);
+        for (bi = 4; bi < sizeof small; bi++) {
+            if ((unsigned char)small[bi] != 0xA5)
+                tail = 0;
         }
+        row_add(r, n == 8 && memcmp(small, "1.0", 4) == 0 && tail);
         t0 = now_ns();
         for (k = 0; k < ITER_FMT; k++)
             rt_fmt_f32(a, sizeof a, 3.141592f);
@@ -972,9 +1470,12 @@ static void run_alloc(void)
     uint64_t t0, t1;
 
     rt_alloc_init(pool, sizeof pool);
-    p1 = rt_malloc(100);
+    row_add(r, rt_malloc(0) == 0);
+    rt_free(0);
+    row_add(r, rt_calloc((size_t)-1, (size_t)-1) == 0);
+    row_add(r, rt_calloc(4, 0) == 0 && rt_calloc(0, 4) == 0);
     p2 = rt_calloc(10, 4);
-    row_add(r, p1 && p2);
+    row_add(r, p2 != 0);
     if (p2) {
         int z = 1;
         size_t i;
@@ -982,10 +1483,50 @@ static void run_alloc(void)
             if (((unsigned char *)p2)[i]) z = 0;
         row_add(r, z);
     }
-    p3 = rt_realloc(p1, 200);
-    row_add(r, p3 != 0);
-    rt_free(p3);
+    p1 = rt_malloc(100);
+    row_add(r, p1 && p1 != p2);
+    if (p1) {
+        unsigned char expect[100];
+        size_t i;
+        for (i = 0; i < 100; i++) {
+            ((unsigned char *)p1)[i] = 0x5A;
+            expect[i] = 0x5A;
+        }
+        if (p2) {
+            int apart = 1;
+            for (i = 0; i < 40; i++) {
+                if (((unsigned char *)p2)[i])
+                    apart = 0;
+            }
+            row_add(r, apart);
+        }
+        p3 = rt_realloc(p1, 200);
+        if (!p3) {
+            row_add(r, 0);
+            rt_free(p1);
+        } else {
+            row_add(r, memcmp(p3, expect, 100) == 0);
+            rt_free(p3);
+        }
+    }
     rt_free(p2);
+    p1 = rt_realloc(0, 24);
+    row_add(r, p1 != 0);
+    rt_free(p1);
+    rt_alloc_init(pool, sizeof pool);
+    {
+        size_t nblk = 0;
+        for (;;) {
+            void *p = rt_malloc(256);
+            if (!p)
+                break;
+            nblk++;
+            if (nblk > 1000)
+                break;
+        }
+        row_add(r, nblk > 0 && nblk < 1000 && rt_malloc(256) == 0);
+    }
+    rt_alloc_init(pool, sizeof pool);
 
     t0 = now_ns();
     for (k = 0; k < 256; k++) {

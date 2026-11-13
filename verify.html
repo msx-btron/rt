@@ -93,7 +93,7 @@
             is a language runtime. The method is the one used here for a vector
             kernel: take the binary that already exists, interpret its bytes,
             and prove that the interpreter meets a functional specification.
-            <code>coq/MemsetNeon.v</code> is that method on 56 ARM64 words, in Coq.
+            <code>verify/models/MemsetNeon.v</code> is that method on 56 ARM64 words, in Coq.
           </p>
         </article>
         <article class="card-item">
@@ -138,7 +138,7 @@
           <li><strong>Kernel</strong><span>Functional specs of <code>memcpy</code>, <code>memmove</code>, <code>memset</code>, and <code>memcmp</code>. No extractor standing in for a proof. No C parser.</span></li>
           <li><strong>Check</strong><span>The memset proof inducts on the 64-byte loop and the 16-byte loop. Finite <code>vm_compute</code> covers the 256 fill bytes, the bit tests under 16, and the decoded words.</span></li>
           <li><strong>Stop rule</strong><span>If <code>coqc</code> gets slow, delete the abstraction that caused it. The GitHub job <code>verify</code> runs the same <code>make verify</code> in the open.</span></li>
-          <li><strong>Checked</strong><span><code>coq/MemsetNeon.v</code> is the bytes of <code>rt_memset_neon</code>. Every fill byte from 0 to 255, every length below 2<sup>64</sup>. The routine writes that many copies of the byte and returns the original pointer. In this model the buffer starts at address 0, so the returned <code>x0</code> is 0. <code>make verify</code> is <code>coqc</code> on that file.</span></li>
+          <li><strong>Checked</strong><span><code>verify/models/MemsetNeon.v</code> is the bytes of <code>rt_memset_neon</code>. Every fill byte from 0 to 255, every length below 2<sup>64</sup>. The routine writes that many copies of the byte and returns the original pointer. In this model the buffer starts at address 0, so the returned <code>x0</code> is 0. <code>make verify</code> is <code>coqc</code> on that file.</span></li>
         </ul>
         <figcaption>
           <span><b>Status</b> — every n below 2<sup>64</sup> checked</span>
@@ -186,7 +186,7 @@
             <tr>
               <td data-label="Step">2</td>
               <td data-label="Artifact">C99 contract</td>
-              <td data-label="Claim"><code>verify/test_host.c</code> is the contract. The same lengths, the same bytes, checked against libc. The assembly is accepted when the contract passes.</td>
+              <td data-label="Claim"><code>verify/suite/test_host.c</code> and <code>verify/suite/test_mem.c</code> are the contract. The same lengths, the same bytes, checked against libc. The assembly is accepted when the contract passes.</td>
               <td data-label="State"><span class="badge badge-teal">Running</span></td>
             </tr>
             <tr>
@@ -198,7 +198,7 @@
             <tr>
               <td data-label="Step">4</td>
               <td data-label="Artifact">Coq model of the binary</td>
-              <td data-label="Claim">One function, one vector kernel. <code>coq/MemsetNeon.v</code> is the model of the frozen bytes of <code>rt_memset_neon</code>. <code>memcpy</code> and <code>memcmp</code> are the next binaries.</td>
+              <td data-label="Claim">One function, one vector kernel. <code>verify/models/MemsetNeon.v</code> is the model of the frozen bytes of <code>rt_memset_neon</code>. <code>memcpy</code> and <code>memcmp</code> are the next binaries.</td>
               <td data-label="State"><span class="badge badge-teal">memset</span></td>
             </tr>
             <tr>
@@ -245,6 +245,47 @@
       </div>
 
       <div class="table-lead">
+        <div class="table-lead-kicker">0 · Contract</div>
+        <h3 class="table-lead-title">The example the other kernels follow</h3>
+        <p>
+          <code>b</code> is <code>c</code> truncated to a byte. The call returns
+          the original pointer and stores <code>b</code> at every index below
+          <code>n</code>. A byte outside that range stays as it was. That third
+          line is the host canary. The checked theorem is the first two lines,
+          with the buffer at address 0 and <code>n &lt; 2<sup>64</sup></code>,
+          so the returned <code>x0</code> is 0. Neon <code>memset</code> is parity
+          with the shipped library. This plate is the contract, not the proof.
+        </p>
+      </div>
+      <figure class="plate">
+        <pre class="cmd">b = c mod 256,    0 ≤ b &lt; 256
+
+rt_memset(d, c, n) = d
+∀ i &lt; n.   ((unsigned char *)d)[i] = b
+∀ i ∉ [0, n).   byte i is unchanged</pre>
+        <figcaption>
+          <span><b>Contract</b> — return, written range, untouched bytes</span>
+          <span>n = 0 writes nothing and returns d</span>
+        </figcaption>
+      </figure>
+      <figure class="plate">
+        <pre class="cmd">void *spec_memset(void *dst, int c, size_t n)
+{
+    unsigned char *p = (unsigned char *)dst;
+    unsigned char b = (unsigned char)c;
+    size_t i;
+
+    for (i = 0; i &lt; n; i++)
+        p[i] = b;
+    return dst;
+}</pre>
+        <figcaption>
+          <span><b>C99</b> — the same writes, idiomatic</span>
+          <span>Fills include −1 and 256+65</span>
+        </figcaption>
+      </figure>
+
+      <div class="table-lead">
         <div class="table-lead-kicker">1 · Statement</div>
         <h3 class="table-lead-title">Main theorem</h3>
         <p>
@@ -273,7 +314,7 @@ Theorem rt_memset_neon_16 :
       s.(mem) = repeat (N.of_nat b) 16.
 <span class="dim">(* apply rt_memset_neon_any; imm_bound discharges (16 &lt; 2^64) *)</span></pre>
         <figcaption>
-          <span><b>File</b> — coq/MemsetNeon.v</span>
+          <span><b>File</b> — verify/models/MemsetNeon.v</span>
           <span>Stdlib · no Admitted</span>
         </figcaption>
       </figure>
@@ -467,11 +508,11 @@ Theorem rt_memset_neon_16 :
         <ul class="spec">
           <li><strong>Behaviour</strong><span><a href="bench.html">bench.html</a> publishes the host oracle: rt against the C library on this machine. Coefficient is libc time over rt time.</span></li>
           <li><strong>C scan</strong><span><a href="security.html">security.html</a> is <code>make security</code>. That gate does not read the assembly, and it does not discharge a proof.</span></li>
-          <li><strong>Coq</strong><span><code>make verify</code> checks <code>coq/MemsetNeon.v</code>: <code>rt_memset_neon</code> for every length below 2<sup>64</sup>. The GitHub job <code>verify</code> runs that command on Rocq 9.2. Ubuntu 24.04 apt package <code>coq</code> is 8.18 and does not provide <code>From Stdlib</code>.</span></li>
+          <li><strong>Coq</strong><span><code>make verify</code> checks <code>verify/models/MemsetNeon.v</code>: <code>rt_memset_neon</code> for every length below 2<sup>64</sup>. The GitHub job <code>verify</code> runs that command on Rocq 9.2. Ubuntu 24.04 apt package <code>coq</code> is 8.18 and does not provide <code>From Stdlib</code>.</span></li>
         </ul>
         <figcaption>
           <span><b>Reading</b> — the check is make verify</span>
-          <span>coq/MemsetNeon.v</span>
+          <span>verify/models/MemsetNeon.v</span>
         </figcaption>
       </figure>
     </div>
@@ -504,7 +545,7 @@ Theorem rt_memset_neon_16 :
       <ul>
         <li>src/aarch64/neon/mem.S</li>
         <li>rt_memset_neon</li>
-        <li>coq/MemsetNeon.v · n &lt; 2^64</li>
+        <li>verify/models/MemsetNeon.v · n &lt; 2^64</li>
       </ul>
     </div>
   </div>

@@ -51,9 +51,9 @@ MODULE_CONFIGS = [
         "folder": "verify",
         "name": "Host oracle",
         "includes": ["-Iinclude"],
-        "excludes": ["verify/build", "verify/.cache"],
+        "excludes": ["verify/.cache"],
         "skip_clang": False,
-        "c_files": ["verify/test_host.c", "verify/test_mem.c"],
+        "c_files": ["verify/suite/test_host.c", "verify/suite/test_mem.c"],
     },
 ]
 

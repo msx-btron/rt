@@ -4,19 +4,19 @@
 all: test
 
 test:
-	sh ./run.sh
+	sh ../scripts/run.sh
 
 test32:
-	sh ./run.sh test32
+	sh ../scripts/run.sh test32
 
 qemu:
-	sh ./qemu.sh all
+	sh ../scripts/qemu.sh all
 
 qemu-p3:
-	sh ./qemu.sh pentium3
+	sh ../scripts/qemu.sh pentium3
 
 qemu-p2:
-	sh ./qemu.sh pentium2
+	sh ../scripts/qemu.sh pentium2
 
 clean:
-	rm -rf build
+	rm -rf ../build

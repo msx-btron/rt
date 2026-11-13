@@ -23,11 +23,22 @@ static int dig(char c)
     return -1;
 }
 
+/* 0x is a hex prefix only when a hex digit follows. Otherwise the 0 is a digit. */
+static int hex_prefix(const char *p)
+{
+    int d;
+    if (p[0] != '0' || (p[1] != 'x' && p[1] != 'X'))
+        return 0;
+    d = dig(p[2]);
+    return d >= 0 && d < 16;
+}
+
 static unsigned long long parse_u(const char *s, char **end, int base, int *neg)
 {
     const char *p = s;
     unsigned long long acc = 0;
     int any = 0;
+    int ov = 0;
     *neg = 0;
     while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == '\f' || *p == '\v')
         p++;
@@ -37,7 +48,7 @@ static unsigned long long parse_u(const char *s, char **end, int base, int *neg)
     }
     if (base == 0) {
         if (*p == '0') {
-            if (p[1] == 'x' || p[1] == 'X') {
+            if (hex_prefix(p)) {
                 base = 16;
                 p += 2;
             } else {
@@ -48,7 +59,7 @@ static unsigned long long parse_u(const char *s, char **end, int base, int *neg)
         } else {
             base = 10;
         }
-    } else if (base == 16 && *p == '0' && (p[1] == 'x' || p[1] == 'X')) {
+    } else if (base == 16 && hex_prefix(p)) {
         p += 2;
     }
     if (base < 2 || base > 36) {
@@ -57,11 +68,19 @@ static unsigned long long parse_u(const char *s, char **end, int base, int *neg)
     }
     for (;;) {
         int d = dig(*p);
-        if (d < 0 || d >= base) break;
-        acc = acc * (unsigned)base + (unsigned)d;
+        if (d < 0 || d >= base)
+            break;
+        if (!ov) {
+            if (acc > (ULLONG_MAX - (unsigned long long)d) / (unsigned)base)
+                ov = 1;
+            else
+                acc = acc * (unsigned)base + (unsigned)d;
+        }
         p++;
         any = 1;
     }
+    if (ov)
+        acc = ULLONG_MAX;
     if (end) *end = (char *)(any ? p : s);
     return acc;
 }
@@ -80,6 +99,8 @@ unsigned long rt_strtoul(const char *s, char **end, int base)
     int neg = 0;
     unsigned long long v = parse_u(s, end, base, &neg);
     if (neg) return (unsigned long)(0UL - (unsigned long)v);
+    if (v > (unsigned long long)ULONG_MAX)
+        return ULONG_MAX;
     return (unsigned long)v;
 }
 
