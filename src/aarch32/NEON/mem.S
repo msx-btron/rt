@@ -3,7 +3,12 @@
    Pi 2 (both revisions), Pi 3, Pi 3A+, Pi 3B+, Zero 2 W, CM3,
    Pi 4, Pi 400, CM4, and STM32MP15. Pi 5 is AArch64 only.
    Symbols are rt_*_a32. rt_*_neon is the AArch64 kernel.
-   VLD1 and VST1 accept an unaligned address. d0-d7 are caller-saved. */
+   VLD1 and VST1 accept an unaligned address. d0-d7 are caller-saved.
+   memcpy: https://github.com/ARM-software/optimized-routines/blob/v25.01/string/arm/memcpy.S
+   memset: https://github.com/ARM-software/optimized-routines/blob/v25.01/string/arm/memset.S
+   That tag has no memcmp. glibc's armv7 IFUNC selects the same family:
+   https://sourceware.org/git/?p=glibc.git;a=blob;f=sysdeps/arm/armv7/multiarch/memcpy.S
+   Index: third_party/aarch32/SOURCES.md */
 .syntax unified
 .cpu cortex-a7
 .arch armv7-a

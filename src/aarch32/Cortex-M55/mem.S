@@ -1,7 +1,12 @@
 /* ARMv8.1-M Helium. STM32N6. Tail-predicated VLDRB/VSTRB copies
    the last partial vector without a byte epilogue. q0-q3 only.
    CPACR must allow CP10 and CP11 before the first MVE instruction.
-   The bench startup does that for this image. */
+   The bench startup does that for this image.
+   No published Helium memcpy, memset, or strlen in Arm Optimized
+   Routines, picolibc, newlib, or LLVM libc. libc stays N/A except
+   picolibc strnlen.c when that C file links.
+   https://github.com/picolibc/picolibc/blob/1.8.10/newlib/libc/string/strnlen.c
+   Index: third_party/aarch32/SOURCES.md */
 .syntax unified
 .cpu cortex-m55
 .thumb

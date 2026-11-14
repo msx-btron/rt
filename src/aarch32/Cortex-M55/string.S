@@ -1,6 +1,10 @@
 /* Helium strings. A 16-byte load stays inside one 4 KiB page.
    vminv finds a NUL. A match is a lane that xors to zero against
-   the splatted character. Bounded copies are Thumb-2 bytes. */
+   the splatted character. Bounded copies are Thumb-2 bytes.
+   No published Helium strlen or strcmp. The only libc string that
+   links here is picolibc strnlen.c:
+   https://github.com/picolibc/picolibc/blob/1.8.10/newlib/libc/string/strnlen.c
+   Index: third_party/aarch32/SOURCES.md */
 .syntax unified
 .cpu cortex-m55
 .thumb

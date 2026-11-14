@@ -58,6 +58,15 @@ sh_write0:
     bx lr
 
 .thumb_func
+.global sh_elapsed
+sh_elapsed:
+    /* SYS_ELAPSED. r0 is an 8-byte buffer. QEMU writes host nanoseconds. */
+    mov r1, r0
+    movs r0, #0x30
+    bkpt 0xAB
+    bx lr
+
+.thumb_func
 .global sh_exit
 sh_exit:
     cmp r0, #0

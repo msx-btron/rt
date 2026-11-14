@@ -1,6 +1,10 @@
 /* ARMv6 ARM-state strings. A word is loaded only when it is aligned
    and the four bytes stay inside one 4 KiB page. A word is stored
-   only when it contains no NUL. */
+   only when it contains no NUL.
+   Arm Optimized Routines memset, strcmp, and strlen at v25.01 are
+   Thumb-2 and are illegal on ARM1176, so those libc cells stay N/A.
+   https://github.com/ARM-software/optimized-routines/tree/v25.01/string/arm
+   Index: third_party/aarch32/SOURCES.md */
 .syntax unified
 .arch armv6
 .cpu arm1176jzf-s

@@ -2,7 +2,12 @@
    No NEON. LDM and STM only on aligned addresses. A mismatched
    source and destination alignment is a byte copy, so the kernel
    is correct whether or not SCTLR.A traps an unaligned LDR.
-   Little-endian. */
+   Little-endian.
+   memcpy is Arm Optimized Routines v25.01 string/arm/memcpy.S
+   built without __ARM_NEON__. memset, strcmp, and strlen from that
+   tag are Thumb-2 and are not linked here.
+   https://github.com/ARM-software/optimized-routines/blob/v25.01/string/arm/memcpy.S
+   Index: third_party/aarch32/SOURCES.md */
 .syntax unified
 .arch armv6
 .cpu arm1176jzf-s

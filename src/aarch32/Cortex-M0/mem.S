@@ -1,6 +1,11 @@
 /* ARMv6-M Thumb-1. Cortex-M0, M0+, M1, and ARMv8-M Baseline M23.
    No unaligned access, no CBZ, no wide post-index. A word load is
-   used only when the address is aligned. STM32C0, F0, G0, L0, U0, WB0. */
+   used only when the address is aligned. STM32C0, F0, G0, L0, U0, WB0.
+   Opponents are under third_party/aarch32/, indexed by SOURCES.md.
+   memcpy: https://github.com/visenri/memcpy_armv6m/blob/2dc57cc1d5944f181db11a0491dba5a00f7c350f/memops_opt/memcpy_armv6m.S
+   memcpy: https://github.com/llvm/llvm-project/blob/a080750a1e8b5b93f7a93dd6df88ce9b1e3a4fe0/libc/src/string/memory_utils/arm/inline_memcpy.h
+   memset: https://github.com/picolibc/picolibc/blob/1.8.10/newlib/libc/machine/arm/memset-thumb.S
+   picolibc memcpy.S has no Thumb-1 memcpy. */
 .syntax unified
 .cpu cortex-m0
 .thumb

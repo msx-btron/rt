@@ -54,6 +54,14 @@ sh_write0:
     svc #0x123456
     bx lr
 
+.global sh_elapsed
+sh_elapsed:
+    /* SYS_ELAPSED. r0 is an 8-byte buffer. QEMU writes host nanoseconds. */
+    mov r1, r0
+    mov r0, #0x30
+    svc #0x123456
+    bx lr
+
 .global sh_exit
 sh_exit:
     cmp r0, #0

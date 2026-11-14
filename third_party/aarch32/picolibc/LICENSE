@@ -1,0 +1,10 @@
+The files in this directory are from picolibc tag 1.8.10.
+https://github.com/picolibc/picolibc/tree/1.8.10/newlib/libc/machine/arm
+
+Each assembly file keeps the BSD notice in its own header. That notice
+is the license for that file. strnlen.c keeps the Red Hat / newlib notice
+in its header. COPYING.NEWLIB is the newlib license text from the same tag.
+
+The upstream copyright inventory for the whole picolibc tree is
+https://github.com/picolibc/picolibc/blob/1.8.10/COPYING.picolibc
+It is not copied here. It lists files this directory does not contain.

@@ -1,6 +1,9 @@
 /* ARMv6-M strings. Thumb-1 only. A word load requires an aligned
    address that still has four bytes inside the current 4 KiB page.
-   No post-index, so every step is a separate add. */
+   No post-index, so every step is a separate add.
+   strlen: https://github.com/picolibc/picolibc/blob/1.8.10/newlib/libc/machine/arm/strlen-thumb1-Os.S
+   strcmp: https://github.com/picolibc/picolibc/blob/1.8.10/newlib/libc/machine/arm/strcmp.S
+   Index: third_party/aarch32/SOURCES.md */
 .syntax unified
 .cpu cortex-m0
 .thumb

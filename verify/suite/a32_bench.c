@@ -2,8 +2,9 @@
    Compile with -DRT_SUF=m0 (or m3, m4, m7, m33, m55, arm1176, a32).
    One plain-text table, same columns as the host oracle.
    strscpy, strscat, and strpad are rt.btron.pro: libc has no symbol.
-   A cycle counter that does not advance leaves both time cells N/A.
-   QEMU numbers are ticks, not silicon, and are not bench.html.
+   A cycle counter that does not advance falls back to semihost
+   SYS_ELAPSED (host microseconds). If that is also stuck, time cells
+   are N/A. QEMU numbers are not silicon and are not bench.html.
    -DRT_HOST uses CLOCK_MONOTONIC and the board libc. */
 #ifdef RT_HOST
 #define _POSIX_C_SOURCE 200809L
@@ -36,6 +37,7 @@ static void sh_exit(int code)
 #include <stddef.h>
 extern void sh_write0(const char *s);
 extern void sh_exit(int code);
+extern void sh_elapsed(unsigned *words);
 #endif
 
 #define CAT(a, b) a##b
@@ -437,7 +439,11 @@ int libc_strcmp(const char *, const char *);
 #endif
 #endif
 
-static unsigned cycles(void)
+/* 0 = no clock, 1 = architectural counter, 2 = semihost host microseconds. */
+static int clock_kind;
+
+#if defined(RT_PMU) || defined(RT_PMU6) || defined(RT_DWT)
+static unsigned arch_cycles(void)
 {
 #if defined(RT_PMU)
     unsigned v;
@@ -447,28 +453,126 @@ static unsigned cycles(void)
     unsigned v;
     __asm__ volatile("mrc p15, 0, %0, c15, c12, 1" : "=r"(v));
     return v;
-#elif defined(RT_DWT)
+#else
     return *(volatile unsigned *)0xE0001004u;
-#elif defined(RT_HOST)
+#endif
+}
+#endif
+
+#ifndef RT_HOST
+/* (hi<<32|lo) / 1000, using only 32-bit shifts. The guest has no libgcc. */
+__attribute__((noinline))
+static unsigned udiv1000_64(unsigned hi, unsigned lo)
+{
+    unsigned rem = 0;
+    unsigned q = 0;
+    unsigned i;
+    for (i = 0; i < 32u; i++) {
+        rem = (rem << 1) | (hi >> 31);
+        hi <<= 1;
+        if (rem >= 1000u) {
+            rem -= 1000u;
+            q = (q << 1) | 1u;
+        } else {
+            q <<= 1;
+        }
+    }
+    q = 0;
+    for (i = 0; i < 32u; i++) {
+        rem = (rem << 1) | (lo >> 31);
+        lo <<= 1;
+        if (rem >= 1000u) {
+            rem -= 1000u;
+            q = (q << 1) | 1u;
+        } else {
+            q <<= 1;
+        }
+    }
+    return q;
+}
+
+static void read_elapsed(unsigned *lo, unsigned *hi)
+{
+    unsigned w[2];
+    w[0] = 0;
+    w[1] = 0;
+    sh_elapsed(w);
+    *lo = w[0];
+    *hi = w[1];
+}
+
+static unsigned elapsed_us(void)
+{
+    unsigned lo, hi;
+    read_elapsed(&lo, &hi);
+    return udiv1000_64(hi, lo);
+}
+#endif
+
+static unsigned cycles(void)
+{
+#if defined(RT_HOST)
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
         return 0;
     return (unsigned)(ts.tv_sec * 1000000000ull + (unsigned long long)ts.tv_nsec);
 #else
+    if (clock_kind == 2)
+        return elapsed_us();
+#if defined(RT_PMU) || defined(RT_PMU6) || defined(RT_DWT)
+    return arch_cycles();
+#else
     return 0;
+#endif
 #endif
 }
 
 static int clock_live(void)
 {
     volatile unsigned sink = 0;
-    unsigned a, b, i;
-    a = cycles();
-    for (i = 0; i < 1000u; i++)
-        sink += i;
-    b = cycles();
-    (void)sink;
-    return a != b;
+    unsigned i;
+#if defined(RT_PMU) || defined(RT_PMU6) || defined(RT_DWT)
+    {
+        unsigned a, b;
+        a = arch_cycles();
+        for (i = 0; i < 1000u; i++)
+            sink += i;
+        b = arch_cycles();
+        if (a != b) {
+            clock_kind = 1;
+            (void)sink;
+            return 1;
+        }
+    }
+#endif
+#ifndef RT_HOST
+    {
+        unsigned a0, a1, b0, b1;
+        read_elapsed(&a0, &a1);
+        for (i = 0; i < 10000u; i++)
+            sink += i;
+        read_elapsed(&b0, &b1);
+        (void)sink;
+        if (a0 != b0 || a1 != b1) {
+            clock_kind = 2;
+            return 1;
+        }
+    }
+#else
+    {
+        unsigned a, b;
+        a = cycles();
+        for (i = 0; i < 1000u; i++)
+            sink += i;
+        b = cycles();
+        (void)sink;
+        if (a != b) {
+            clock_kind = 1;
+            return 1;
+        }
+    }
+#endif
+    return 0;
 }
 
 static unsigned median(unsigned *v, unsigned n)
@@ -779,6 +883,7 @@ static void time_all(void)
     (void)sink;
 }
 
+__attribute__((noinline))
 static unsigned udiv(unsigned n, unsigned d)
 {
     unsigned q = 0, r = 0, i;
@@ -871,11 +976,8 @@ static void put_coef(unsigned libc_n, unsigned rt_n)
     frac = h - whole * 100u;
     fmt_u(b, whole, &len);
     b[len++] = '.';
-    tens = 0;
-    while (frac >= 10) {
-        frac -= 10;
-        tens++;
-    }
+    tens = udiv(frac, 10u);
+    frac = frac - tens * 10u;
     b[len++] = (char)('0' + tens);
     b[len++] = (char)('0' + frac);
     b[len] = 0;
@@ -930,9 +1032,19 @@ static void print_table(void)
     sh_write0("\n== backend: ");
     put_backend();
     sh_write0(" ==\n");
-    sh_write0("legend: coef = libc_ns/rt_ns · median of 21 samples · 1.00 = parity · N/A = no libc symbol or a stuck counter\n");
+    sh_write0("legend: coef = libc/rt · median of 21 samples · 1.00 = parity · N/A = no libc symbol or no clock\n");
     sh_write0("strscpy, strscat, strpad are rt.btron.pro and have no libc symbol\n");
-#if defined(RT_HOST)
+#ifndef RT_HOST
+    if (clock_kind == 2)
+        sh_write0("clock: semihost SYS_ELAPSED, host microseconds. QEMU does not advance this cycle counter.\n");
+    else if (clock_kind == 1)
+        sh_write0("clock: architectural cycle counter\n");
+    else
+        sh_write0("clock: stuck\n");
+#endif
+#if defined(RT_BASELINE)
+    sh_write0("baseline: " RT_BASELINE "\n");
+#elif defined(RT_HOST)
     sh_write0("baseline: board libc\n");
 #elif defined(RT_PMU) || defined(RT_PMU6)
     sh_write0("baseline: Arm Optimized Routines v25.01\n");
@@ -941,8 +1053,46 @@ static void print_table(void)
 #else
     sh_write0("baseline: none\n");
 #endif
+#ifndef RT_HOST
+#ifdef RT_KERNEL
+    sh_write0("kernel: " RT_KERNEL "\n");
+#endif
+#ifdef RT_SRC_MEMCPY
+    sh_write0("memcpy " RT_SRC_MEMCPY "\n");
+#else
+    sh_write0("memcpy none\n");
+#endif
+#ifdef RT_SRC_MEMSET
+    sh_write0("memset " RT_SRC_MEMSET "\n");
+#else
+    sh_write0("memset none\n");
+#endif
+#ifdef RT_SRC_MEMCMP
+    sh_write0("memcmp " RT_SRC_MEMCMP "\n");
+#else
+    sh_write0("memcmp none\n");
+#endif
+#ifdef RT_SRC_STRLEN
+    sh_write0("strlen " RT_SRC_STRLEN "\n");
+#else
+    sh_write0("strlen none\n");
+#endif
+#ifdef RT_SRC_STRNLEN
+    sh_write0("strnlen " RT_SRC_STRNLEN "\n");
+#else
+    sh_write0("strnlen none\n");
+#endif
+#ifdef RT_SRC_STRCMP
+    sh_write0("strcmp " RT_SRC_STRCMP "\n");
+#else
+    sh_write0("strcmp none\n");
+#endif
+#endif
     sh_write0(bar);
-    sh_write0("| function         | libc ns  | rt ns    | checks | fail | coef       |\n");
+    if (clock_kind == 2)
+        sh_write0("| function         | libc us  | rt us    | checks | fail | coef       |\n");
+    else
+        sh_write0("| function         | libc ns  | rt ns    | checks | fail | coef       |\n");
     sh_write0(bar);
     for (i = 0; i < NROW; i++) {
         sh_write0("| ");

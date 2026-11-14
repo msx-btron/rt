@@ -1,6 +1,9 @@
 /* AArch32 NEON strings. A 16-byte load is refused when it would cross
    a 4 KiB page. A vector is stored only when it contains no NUL.
-   The awkward bounded copies are the ARM byte routines in rest.inc. */
+   The awkward bounded copies are the ARM byte routines in rest.inc.
+   strcmp: https://github.com/ARM-software/optimized-routines/blob/v25.01/string/arm/strcmp.S
+   strlen: https://github.com/ARM-software/optimized-routines/blob/v25.01/string/arm/strlen-armv6t2.S
+   Index: third_party/aarch32/SOURCES.md */
 .syntax unified
 .cpu cortex-a7
 .arch armv7-a

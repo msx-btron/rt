@@ -188,7 +188,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            clang lld qemu-system-arm python3 curl
+            clang lld qemu-system-arm python3 curl binutils-arm-linux-gnueabihf
       - name: AArch32 contracts
         run: sh scripts/aarch32.sh
 
