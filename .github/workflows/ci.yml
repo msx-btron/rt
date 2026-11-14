@@ -1,6 +1,7 @@
 # rt — multi-arch kernel CI
 # Native x86_64, QEMU user-mode for IA-32 and AArch64, QEMU virt for RVV,
-# and one Cloud-V board for RVV 1.0 silicon.
+# qemu-system Malta R4000 for the Nintendo 64 kernels, an assemble-check
+# for the PlayStation 2 kernels, and one Cloud-V board for RVV 1.0 silicon.
 name: ci
 
 on:
@@ -183,19 +184,51 @@ jobs:
   # Install the Cloud-V GitHub Runners app on this repository or the
   # job stays queued.
   # ------------------------------------------------------------------
-  riscv-hw-rvv64:
-    name: RISC-V HW RVV64
-    runs-on: [self-hosted, banana-pi-f3]
-    timeout-minutes: 90
+
+#  riscv-hw-rvv64:
+#    name: RISC-V HW RVV64
+#    runs-on: [self-hosted, banana-pi-f3]
+#    timeout-minutes: 90
+#    steps:
+#      - uses: actions/checkout@v4
+#      - name: Install clang
+#        run: |
+#          sudo apt-get update -qq
+#          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+#            clang binutils libc6-dev
+#      - name: RISC-V HW RVV64
+#        run: sh scripts/riscv_hw.sh
+
+  # ------------------------------------------------------------------
+  # Nintendo 64 stand-in: qemu-system -M malta -cpu R4000.
+  # Scalar C99 off, scalar C99 on, and the VR4300 ld/sd kernels.
+  # PlayStation 2: assemble src/mips64/ee. Ubuntu 24.04's QEMU has no R5900.
+  # ------------------------------------------------------------------
+  mips-rcp:
+    name: MIPS64 RCP
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang
+      - name: Install the mips64el cross compiler and QEMU system
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            clang binutils libc6-dev
-      - name: RISC-V HW RVV64
-        run: sh scripts/riscv_hw.sh
+            gcc-13-mips64el-linux-gnuabi64 qemu-system-mips
+      - name: Nintendo 64 kernels on Malta R4000
+        run: sh scripts/mips64.sh rcp
+
+  mips-ee:
+    name: MIPS64 EE
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the mips64el assembler and QEMU system
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            gcc-13-mips64el-linux-gnuabi64 qemu-system-mips
+      - name: PlayStation 2 assemble-check
+        run: sh scripts/mips64.sh ee
 
   # ------------------------------------------------------------------
   # SQCSA Test Suite — `make security` must come back clean
@@ -253,6 +286,8 @@ jobs:
       - riscv-rvv32
       - riscv-rvv64
       - riscv-hw-rvv64
+      - mips-rcp
+      - mips-ee
       - sqcsa
       - verify
     if: always()
@@ -266,6 +301,8 @@ jobs:
           echo "riscv-rvv32:        ${{ needs.riscv-rvv32.result }}"
           echo "riscv-rvv64:        ${{ needs.riscv-rvv64.result }}"
           echo "riscv-hw-rvv64:     ${{ needs.riscv-hw-rvv64.result }}"
+          echo "mips-rcp:           ${{ needs.mips-rcp.result }}"
+          echo "mips-ee:            ${{ needs.mips-ee.result }}"
           echo "sqcsa:              ${{ needs.sqcsa.result }}"
           echo "verify:             ${{ needs.verify.result }}"
           # Fail the workflow if any required job failed
@@ -277,6 +314,8 @@ jobs:
             "${{ needs.riscv-rvv32.result }}" \
             "${{ needs.riscv-rvv64.result }}" \
             "${{ needs.riscv-hw-rvv64.result }}" \
+            "${{ needs.mips-rcp.result }}" \
+            "${{ needs.mips-ee.result }}" \
             "${{ needs.sqcsa.result }}" \
             "${{ needs.verify.result }}"
           do

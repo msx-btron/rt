@@ -4,11 +4,11 @@
 /* Straight loops. On the host, clang -O2 widens an aligned run of these
    into wide stores when the vectorizers are on. The timed rows are
    64-byte aligned.
-   RISC-V with the vectorizers off does not widen a byte loop, so that
-   build copies aligned size_t words. The vectorize-on build keeps these
-   byte loops and may emit RVV. */
+   RISC-V and MIPS with the vectorizers off do not widen a byte loop,
+   so that build copies aligned size_t words. The vectorize-on build
+   keeps these byte loops and may emit a wider instruction. */
 
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
 static size_t load_aligned(const void *p)
 {
     size_t w;
@@ -103,7 +103,7 @@ static void set_words(unsigned char *p, unsigned char uc, size_t n)
 
     fill |= fill << 8;
     fill |= fill << 16;
-#if __riscv_xlen == 64
+#if __SIZEOF_SIZE_T__ == 8
     fill |= fill << 32;
 #endif
     while (n >= step) {
@@ -139,7 +139,7 @@ void *rt_memcpy_scalar(void *dst, const void *src, size_t n)
     const unsigned char *s = (const unsigned char *)src;
     size_t i;
 
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
     if (both_aligned(d, s)) {
         copy_words(d, s, n);
         return dst;
@@ -158,7 +158,7 @@ void *rt_memmove_scalar(void *dst, const void *src, size_t n)
 
     if (d == s || n == 0)
         return dst;
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
     if (both_aligned(d, s)) {
         /* Overlap with dst above src must copy from the top. */
         if (d < s)
@@ -185,7 +185,7 @@ void *rt_memset_scalar(void *dst, int c, size_t n)
     unsigned char uc = (unsigned char)c;
     size_t i;
 
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
     if (((uintptr_t)p & (sizeof(size_t) - 1)) == 0) {
         set_words(p, uc, n);
         return dst;

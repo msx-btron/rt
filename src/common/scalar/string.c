@@ -14,9 +14,10 @@ static size_t load_word(const void *p)
     return w;
 }
 
-#if defined(__riscv) && !defined(RT_VECTORIZE)
-/* assume_aligned lets clang emit ld/sd. A plain memcpy of a size_t
-   stays eight lbu on RISC-V, because the ABI forbids a misaligned ld. */
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
+/* assume_aligned lets clang emit ld/sd or lw/sw. A plain memcpy of a
+   size_t stays a byte loop on RISC-V and MIPS, because a misaligned
+   ld is not a valid access. */
 static size_t load_aligned(const void *p)
 {
     size_t w;
@@ -46,7 +47,7 @@ static void store_fast(void *p, size_t w)
 
 /* Sites below have already peeled to size_t alignment on RISC-V.
    A runtime check in the helper makes clang keep the lbu rebuild. */
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
 #define load_known load_aligned
 #define store_known store_aligned
 #else
@@ -152,7 +153,7 @@ char *rt_strcpy(char *dst, const char *src)
 char *rt_strncpy(char *dst, const char *src, size_t n)
 {
     size_t i = 0;
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
     if ((((uintptr_t)dst ^ (uintptr_t)src) & (sizeof(size_t) - 1)) == 0) {
         while (i < n && ((uintptr_t)(src + i) & (sizeof(size_t) - 1)) != 0) {
             if (src[i] == '\0')
@@ -208,7 +209,7 @@ int rt_strcmp(const char *a, const char *b)
        still loads words; the bytes after a NUL in that word are the
        over-read, same as the aligned path. A misaligned ld traps, so
        only the peeled path uses the aligned helper. */
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
     if ((((uintptr_t)x ^ (uintptr_t)y) & (sizeof(size_t) - 1)) == 0) {
         while (((uintptr_t)x & (sizeof(size_t) - 1)) != 0) {
             if (*x != *y || *x == 0)
@@ -330,7 +331,7 @@ char *rt_strchr(const char *s, int c)
     unsigned char uc = (unsigned char)c;
     const unsigned char *p = (const unsigned char *)s;
 
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
     while (((uintptr_t)p & (sizeof(size_t) - 1)) != 0) {
         if (*p == uc)
             return (char *)p;
@@ -383,7 +384,7 @@ char *rt_strrchr(const char *s, int c)
 {
     unsigned char uc = (unsigned char)c;
     const char *last = 0;
-#if defined(__riscv) && !defined(RT_VECTORIZE)
+#if (defined(__riscv) || defined(__mips)) && !defined(RT_VECTORIZE)
     {
         const unsigned char *p = (const unsigned char *)s;
         while (((uintptr_t)p & (sizeof(size_t) - 1)) != 0) {

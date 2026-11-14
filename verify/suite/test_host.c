@@ -35,6 +35,10 @@
 #define RT_RUN_SIMD 1
 #elif defined(RT_TABLE_RVV)
 #define RT_RUN_RVV 1
+#elif defined(RT_TABLE_EE)
+#define RT_RUN_EE 1
+#elif defined(RT_TABLE_RCP)
+#define RT_RUN_RCP 1
 #else
 #define RT_RUN_SCALAR 1
 #define RT_RUN_NEON 1
@@ -1307,9 +1311,10 @@ static void run_strings(void)
     exercise_strings_misc();
 }
 
-#if defined(__riscv) && (defined(RT_RUN_RVV) || defined(RT_RUN_SCALAR))
-/* One binary, one backend. The benches are the same for the C99 scalar
-   kernels and the RVV kernels so the two tables compare the same calls. */
+#if (defined(__riscv) && (defined(RT_RUN_RVV) || defined(RT_RUN_SCALAR))) \
+    || (defined(__mips) && (defined(RT_RUN_SCALAR) || defined(RT_RUN_RCP) \
+                            || defined(RT_RUN_EE)))
+/* One binary, one backend. RISC-V and MIPS share these rows. */
 #if defined(RT_RUN_RVV)
 #define RT_STRLEN   rt_strlen_rvv
 #define RT_STRNLEN  rt_strnlen_rvv
@@ -1327,6 +1332,40 @@ static void run_strings(void)
 #define RT_STRSCAT  rt_strscat_rvv
 #define RT_STRPAD   rt_strpad_rvv
 #define RT_BACKEND  "rvv"
+#elif defined(RT_RUN_EE)
+#define RT_STRLEN   rt_strlen_ee
+#define RT_STRNLEN  rt_strnlen_ee
+#define RT_STRCPY   rt_strcpy_ee
+#define RT_STRNCPY  rt_strncpy_ee
+#define RT_STRCAT   rt_strcat_ee
+#define RT_STRNCAT  rt_strncat_ee
+#define RT_STRCMP   rt_strcmp_ee
+#define RT_STRNCMP  rt_strncmp_ee
+#define RT_STRCHR   rt_strchr_ee
+#define RT_STRRCHR  rt_strrchr_ee
+#define RT_STRSTR   rt_strstr_ee
+#define RT_STRPBRK  rt_strpbrk_ee
+#define RT_STRSCPY  rt_strscpy_ee
+#define RT_STRSCAT  rt_strscat_ee
+#define RT_STRPAD   rt_strpad_ee
+#define RT_BACKEND  "ee"
+#elif defined(RT_RUN_RCP)
+#define RT_STRLEN   rt_strlen_rcp
+#define RT_STRNLEN  rt_strnlen_rcp
+#define RT_STRCPY   rt_strcpy_rcp
+#define RT_STRNCPY  rt_strncpy_rcp
+#define RT_STRCAT   rt_strcat_rcp
+#define RT_STRNCAT  rt_strncat_rcp
+#define RT_STRCMP   rt_strcmp_rcp
+#define RT_STRNCMP  rt_strncmp_rcp
+#define RT_STRCHR   rt_strchr_rcp
+#define RT_STRRCHR  rt_strrchr_rcp
+#define RT_STRSTR   rt_strstr_rcp
+#define RT_STRPBRK  rt_strpbrk_rcp
+#define RT_STRSCPY  rt_strscpy_rcp
+#define RT_STRSCAT  rt_strscat_rcp
+#define RT_STRPAD   rt_strpad_rcp
+#define RT_BACKEND  "rcp"
 #else
 #define RT_STRLEN   rt_strlen
 #define RT_STRNLEN  rt_strnlen
@@ -2677,6 +2716,10 @@ int main(void)
     printf("binary: simd\n");
 #elif defined(RT_TABLE_RVV)
     printf("binary: rvv\n");
+#elif defined(RT_TABLE_EE)
+    printf("binary: ee\n");
+#elif defined(RT_TABLE_RCP)
+    printf("binary: rcp\n");
 #endif
 
 #if defined(__i386__) && !defined(__x86_64__)
@@ -2697,6 +2740,11 @@ int main(void)
 #define RT_LIBC_NAME "musl"
 #endif
     printf("host: riscv%u  ·  libc: %s\n", (unsigned)__riscv_xlen, RT_LIBC_NAME);
+#elif defined(__mips)
+#ifndef RT_LIBC_NAME
+#define RT_LIBC_NAME "glibc"
+#endif
+    printf("host: mips64  ·  libc: %s\n", RT_LIBC_NAME);
 #elif defined(__aarch64__) || defined(__arm64__)
     printf("host: ARM64");
 #if !defined(RT_TABLE_SCALAR) && !defined(RT_TABLE_NEON) && !defined(RT_TABLE_SME)
@@ -2729,7 +2777,7 @@ int main(void)
         return 1;
     }
 #endif
-#if defined(RT_RUN_SCALAR) && !defined(__riscv)
+#if defined(RT_RUN_SCALAR) && !defined(__riscv) && !defined(__mips)
     run_mem_backend("scalar", rt_memcpy_scalar, rt_memmove_scalar,
                     rt_memset_scalar, rt_memcmp_scalar);
     run_strings();
@@ -2791,6 +2839,20 @@ int main(void)
 #endif
 #if defined(RT_RUN_RVV)
     run_mem_backend("rvv", rt_memcpy_rvv, 0, rt_memset_rvv, rt_memcmp_rvv);
+    run_strings_riscv();
+#endif
+#elif defined(__mips)
+#if defined(RT_RUN_SCALAR)
+    run_mem_backend("scalar", rt_memcpy_scalar, rt_memmove_scalar,
+                    rt_memset_scalar, rt_memcmp_scalar);
+    run_strings_riscv();
+#endif
+#if defined(RT_RUN_RCP)
+    run_mem_backend("rcp", rt_memcpy_rcp, 0, rt_memset_rcp, rt_memcmp_rcp);
+    run_strings_riscv();
+#endif
+#if defined(RT_RUN_EE)
+    run_mem_backend("ee", rt_memcpy_ee, 0, rt_memset_ee, rt_memcmp_ee);
     run_strings_riscv();
 #endif
 #endif

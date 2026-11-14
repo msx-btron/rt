@@ -1,0 +1,211 @@
+PlayStation 2 and Nintendo 64
+2026-11-15
+
+
+Decision
+
+The two consoles do not share a vector ISA, so they do not share a kernel
+directory or a runner.
+
+  src/mips64/ee/    Emotion Engine. LQ/SQ and the MMI subset below.
+                    Local run is PCSX2. Ubuntu CI only assembles the file:
+                    Homebrew QEMU 11.0.3 and Ubuntu 24.04's QEMU have no
+                    R5900 CPU.
+
+  src/mips64/rcp/   VR4300. Aligned ld/sd, sixteen bytes a step, unrolled
+                    to 64. This is the CPU a game calls. It is not RSP
+                    microcode. The RSP scalar unit is 32-bit, has no ld/sd,
+                    and its vector unit sees only the 4 KiB DMEM.
+
+`make mips` builds three binaries for each machine and prints the
+test-suite table while that emulator is still running:
+
+  scalar C99, vectorizers off
+  scalar C99, vectorizers on
+  handwritten kernel
+
+The scalar source is src/common/scalar/. Each console gets its own
+compilation. PlayStation 2 is o32, so size_t is 4 and the vectorizer-off
+memcpy widens to ldl/ldr (68 of those in rt_memcpy_scalar, no ld/sd).
+Nintendo 64 is n64, so size_t is 8 and the same function is ld/sd (73 in
+rt_memcpy_scalar). The vectorizer-on build of both is an lbu/sb loop.
+Nothing in either scalar-on object is MMI or MSA. The suite does not
+treat that as a failed build.
+
+Ares is not installed on this Mac. The Nintendo 64 runner is
+
+  qemu-system-mips64el -M malta -cpu R4000
+
+R4000 is a MIPS III stand-in. It is not a 93.75 MHz VR4300 and it is not
+an N64 cartridge emulator. PCSX2's CP0 Count is not a 294.912 MHz Emotion
+Engine. Both clocks stay out of bench.html.
+
+
+Kernels
+
+Emotion Engine GPRs are 128 bits. Integer ops and ld/sd see the low 64.
+LQ/SQ are the 16-byte move. A scalar value is splatted with PCPYLD before
+any SQ, because a non-MMI write leaves the high half stale. MMI in these
+files is the subset QEMU's TX79 translator actually implements: LQ, SQ,
+PCEQB, PCPYUD, PCPYLD, PXOR, PAND, POR. Clang 22 here has no MMI mnemonic,
+so those ops are .word. The PCSX2 ELF is ELF32 o32, entry 0x00100000.
+Leaf arguments stay in $a0-$a2.
+
+VR4300 is MIPS III: 64-bit GPRs, 32-bit system bus, no MSA, no MMI, no
+paired single. The fast path is two ld/sd per 16 bytes. Temporaries in
+src/mips64/rcp/ are $8-$15. Clang -mabi=64 binds the name t0 to GPR 12
+and folds t4 into that same GPR, which collapsed the memset splat on the
+first Malta boot (22860 failures, all from the wide store). Numeric
+registers assemble to the same GPRs in o32 and n64.
+
+The Malta ELF is ELF64, entry 0xffffffff80010000. A zero-extended
+0x80010000 takes an address error in 64-bit mode. The UART is the Malta
+16550 at the sign-extended port 0xb80003f8. The guest clears BSS before
+it writes that port.
+
+
+Measured
+
+One `make mips` on this Mac, 2026-11-15. PCSX2 2.8.2 under Rosetta
+booted OpenPS2BIOS 0.6. Each EE log contains
+`BIOS Found: USA v00.06(05/11/2026) Devel` and
+`[openbios:ee] OpenPS2BIOS 0.6 ready`. The
+PCSX2 tick rows match an earlier boot that used a different ROM.
+QEMU 11.0.3, system mips64el, Malta, -cpu R4000, 64 MiB. Four warm-up
+calls, then 100 repetitions. The tick is one CP0 Count delta, not a
+median of boots. Memory rows are 1024 bytes. String rows are 64
+characters. The Count moved between Malta boots in this session, so the
+QEMU column is this run's sample of the emulator clock.
+
+PCSX2, checks 25025 fail 0, then the Emotion Engine binary at
+126237 fail 0. The scalar column beside ee matches scalar-off.
+
+  | function | kernel | ticks |
+  | memcpy | scalar | 109101 |
+  | memset | scalar | 61701 |
+  | memcmp | scalar | 5001 |
+  | strlen | scalar | 15801 |
+  | strcpy | scalar | 20501 |
+  | strcmp | scalar | 23601 |
+
+  | function | kernel | ticks |
+  | memcpy | scalar | 719401 |
+  | memset | scalar | 514601 |
+  | memcmp | scalar | 5001 |
+  | strlen | scalar | 19201 |
+  | strcpy | scalar | 25801 |
+  | strcmp | scalar | 28901 |
+
+  | function | kernel | ticks |
+  | memcpy | ee | 43901 |
+  | memset | ee | 32101 |
+  | memcmp | ee | 4201 |
+  | strlen | ee | 9401 |
+  | strcpy | ee | 12101 |
+  | strcmp | ee | 17301 |
+
+Malta R4000. Scalar binaries, checks 25025 fail 0. VR4300 binary,
+checks 126237 fail 0.
+
+  | function | kernel | ticks |
+  | memcpy | scalar | 4160 |
+  | memset | scalar | 1920 |
+  | memcmp | scalar | 1440 |
+  | strlen | scalar | 1440 |
+  | strcpy | scalar | 1600 |
+  | strcmp | scalar | 1440 |
+
+  | function | kernel | ticks |
+  | memcpy | scalar | 23200 |
+  | memset | scalar | 12800 |
+  | memcmp | scalar | 1120 |
+  | strlen | scalar | 1440 |
+  | strcpy | scalar | 13600 |
+  | strcmp | scalar | 1760 |
+
+  | function | kernel | ticks |
+  | memcpy | scalar | 3040 |
+  | memset | scalar | 1920 |
+  | memcmp | scalar | 1920 |
+  | strlen | scalar | 1440 |
+  | strcpy | scalar | 1440 |
+  | strcmp | scalar | 1600 |
+  | memcpy | rcp | 3040 |
+  | memset | rcp | 2240 |
+  | memcmp | rcp | 1280 |
+  | strlen | rcp | 1440 |
+  | strcpy | rcp | 1600 |
+  | strcmp | rcp | 2080 |
+
+On this QEMU the ld/sd kernel does not beat the vectorizer-off scalar.
+That is the translator's cost per instruction. The unroll stays. It is
+the body a VR4300 should run, and it passed the same contract checks as
+the Emotion Engine kernel.
+
+
+Not used
+
+I6400 with MSA is a different CPU. QEMU will run ld.b there. It is not
+the Emotion Engine and not the VR4300. Loongson MMI is not TX79 MMI.
+There is no MIPS64 hardware runner in this CI. GitHub-hosted machines
+are x86_64 and arm64. The Cloud-V board attached to this repo is the
+Banana Pi BPI-F3, which is RISC-V.
+
+The RSP vector unit is not a callable memcpy. Shipping VU microcode
+would be a second program in DMEM, not a C ABI kernel.
+
+
+Sources
+
+QEMU MIPS boards and CPUs
+  https://www.qemu.org/docs/master/system/target-mips.html
+
+TX79 decode and translator. R5900 in cpu-defs.c.inc is system-mode
+only, and it is absent from the 11.0.3 tag.
+  https://gitlab.com/qemu-project/qemu/-/blob/master/target/mips/tcg/tx79.decode
+  https://gitlab.com/qemu-project/qemu/-/blob/master/target/mips/tcg/tx79_translate.c
+  https://gitlab.com/qemu-project/qemu/-/blob/master/target/mips/cpu-defs.c.inc
+
+TX79 / C790 programming manual, via the QEMU wiki file
+  https://wiki.qemu.org/File:C790.pdf
+
+VR4300
+  https://n64brew.dev/wiki/VR4300
+
+RSP CPU core, separate from the VR4300
+  https://n64brew.dev/wiki/Reality_Signal_Processor/CPU_Core
+
+OpenPS2BIOS 0.6. Emulator-only PS2 ROM. Not a Sony dump.
+  https://github.com/TamaribaEmu/OpenPS2BIOS/releases/tag/v0.6
+
+GCC R5900 and -mfix-r5900
+  https://gcc.gnu.org/onlinedocs/gcc/MIPS-Options.html
+
+LLVM r5900, landed without MMI mnemonics
+  https://github.com/llvm/llvm-project/pull/176666
+
+
+Reproduction
+
+  make mips
+
+PCSX2 is /Applications/PCSX2.app. The script writes a scratch datapath
+whose only ROM is OpenPS2BIOS 0.6. It downloads
+
+  https://github.com/TamaribaEmu/OpenPS2BIOS/releases/download/v0.6/OpenPS2BIOS-0.6.bin
+
+and requires SHA-256
+
+  3702baa508ff40498fab4a95429a2ae1f903d11f5bbcdd4e1a87dbe9f5d21a84
+
+The image is MIT, for emulators. It does not initialise a real console's
+memory controller, so it must not be flashed. The 4 MiB file is cached
+under build/mips and is not committed. PCSX2_BIOS may point at a copy,
+and that copy is refused unless the hash matches. The ELF is passed by
+its real path. The guest writes the SIO port at 0x1000F180. PCSX2
+prefixes each line with a timestamp. scripts/mips64.sh strips that
+prefix and prints the row while the process is still up. The guest then
+hangs, and the script stops PCSX2 after "run complete".
+
+The Malta guest writes the 16550. QEMU's serial bytes are the table.
+The same script prints them before it stops QEMU.

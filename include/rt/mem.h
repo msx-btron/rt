@@ -23,6 +23,10 @@
                 The proved neon memset stays separate.
      rvv        RV32 or RV64 V, m8 e8 (one object per XLEN).
                 memcpy, memset, memcmp. memmove stays scalar.
+     ee         PlayStation 2 R5900. LQ/SQ and the MMI subset.
+                memcpy, memset, memcmp. memmove stays scalar.
+     rcp        Nintendo 64 VR4300. ld/sd, not RSP microcode.
+                memcpy, memset, memcmp. memmove stays scalar.
 */
 
 void *rt_memcpy_scalar(void *dst, const void *src, size_t n);
@@ -80,5 +84,13 @@ int   rt_memcmp_sme(const void *a, const void *b, size_t n);
 void *rt_memcpy_rvv(void *dst, const void *src, size_t n);
 void *rt_memset_rvv(void *dst, int c, size_t n);
 int   rt_memcmp_rvv(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_ee(void *dst, const void *src, size_t n);
+void *rt_memset_ee(void *dst, int c, size_t n);
+int   rt_memcmp_ee(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_rcp(void *dst, const void *src, size_t n);
+void *rt_memset_rcp(void *dst, int c, size_t n);
+int   rt_memcmp_rcp(const void *a, const void *b, size_t n);
 
 #endif
