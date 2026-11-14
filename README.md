@@ -85,7 +85,7 @@ verify: rt_memset_neon, n < 2^64 checked
 ├── src
 │   ├── aarch64
 │   ├── common
-│   ├── i386
+│   ├── x86_32
 │   ├── riscv32
 │   ├── riscv64
 │   └── x86_64

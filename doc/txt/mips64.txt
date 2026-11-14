@@ -7,12 +7,12 @@ Decision
 The two consoles do not share a vector ISA, so they do not share a kernel
 directory or a runner.
 
-  src/mips64/ee/    Emotion Engine. LQ/SQ and the MMI subset below.
+  src/mips64/R5900/ Emotion Engine. LQ/SQ and the MMI subset below.
                     Local run is PCSX2. Ubuntu CI only assembles the file:
                     Homebrew QEMU 11.0.3 and Ubuntu 24.04's QEMU have no
                     R5900 CPU.
 
-  src/mips64/rcp/   VR4300. Aligned ld/sd, sixteen bytes a step, unrolled
+  src/mips64/VR4300/ VR4300. Aligned ld/sd, sixteen bytes a step, unrolled
                     to 64. This is the CPU a game calls. It is not RSP
                     microcode. The RSP scalar unit is 32-bit, has no ld/sd,
                     and its vector unit sees only the 4 KiB DMEM.
@@ -53,7 +53,7 @@ Leaf arguments stay in $a0-$a2.
 
 VR4300 is MIPS III: 64-bit GPRs, 32-bit system bus, no MSA, no MMI, no
 paired single. The fast path is two ld/sd per 16 bytes. Temporaries in
-src/mips64/rcp/ are $8-$15. Clang -mabi=64 binds the name t0 to GPR 12
+src/mips64/VR4300/ are $8-$15. Clang -mabi=64 binds the name t0 to GPR 12
 and folds t4 into that same GPR, which collapsed the memset splat on the
 first Malta boot (22860 failures, all from the wide store). Numeric
 registers assemble to the same GPRs in o32 and n64.

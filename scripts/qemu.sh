@@ -26,7 +26,7 @@ linux_usermode() {
 src/common/scalar/stdlib.c src/common/scalar/stdio.c"
     mkdir -p build
     $cc $cflags -m32 -static -o build/test_host32s verify/suite/test_host.c $scalar \
-        src/i386/rep/mem.s src/i386/mmx/mem.s src/i386/sse/mem.s
+        src/x86_32/rep/mem.s src/x86_32/mmx/mem.s src/x86_32/sse/mem.s
     cp -f build/test_host32s /tmp/rt_test_host32s
     chmod +x /tmp/rt_test_host32s
     run_one() {

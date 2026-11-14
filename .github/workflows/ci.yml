@@ -64,7 +64,7 @@ jobs:
           cc $CFLAGS -m32 -static -Iinclude -o /tmp/test_host32 verify/suite/test_host.c \
             src/common/scalar/mem.c src/common/scalar/string.c \
             src/common/scalar/stdlib.c src/common/scalar/stdio.c \
-            src/i386/rep/mem.s src/i386/mmx/mem.s src/i386/sse/mem.s
+            src/x86_32/rep/mem.s src/x86_32/mmx/mem.s src/x86_32/sse/mem.s
       - name: QEMU pentium2 (scalar+i386+mmx)
         run: qemu-i386 -cpu pentium2 /tmp/test_host32
       - name: QEMU pentium3 (scalar+i386+mmx+sse)
@@ -72,8 +72,8 @@ jobs:
       - name: Assemble PC-98 kernels
         run: |
           set -eux
-          cc -m32 -c -o /tmp/pc98.o src/i386/pc98/mem.s
-          cc -m32 -c -o /tmp/pc98_16.o src/i386/pc98/mem16.s
+          cc -m32 -c -o /tmp/pc98.o src/x86_32/pc98/mem.s
+          cc -m32 -c -o /tmp/pc98_16.o src/x86_32/pc98/mem16.s
           echo "pc98 asm ok"
 
   # ------------------------------------------------------------------
@@ -202,7 +202,7 @@ jobs:
   # ------------------------------------------------------------------
   # Nintendo 64 stand-in: qemu-system -M malta -cpu R4000.
   # Scalar C99 off, scalar C99 on, and the VR4300 ld/sd kernels.
-  # PlayStation 2: assemble src/mips64/ee. Ubuntu 24.04's QEMU has no R5900.
+  # PlayStation 2: assemble src/mips64/R5900. Ubuntu 24.04's QEMU has no R5900.
   # ------------------------------------------------------------------
   mips-rcp:
     name: MIPS64 RCP

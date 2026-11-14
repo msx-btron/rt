@@ -3,7 +3,7 @@ src/common/scalar  and  verify/  —  2026-11-13
 
 Scope is the scalar C99 runtime under src/common/scalar/ and the host
 oracle (verify/suite/test_host.c, verify/suite/test_mem.c), plus the headers they
-include. Assembly backends under src/aarch64, src/i386, src/riscv32,
+include. Assembly backends under src/aarch64, src/x86_32, src/riscv32,
 src/riscv64, and src/x86_64 are not scanned and not edited. These three
 tools read C.
 

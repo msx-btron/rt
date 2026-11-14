@@ -2,7 +2,7 @@
 # PlayStation 2 and Nintendo 64 kernel check.
 #   auto (make mips): PCSX2 for the Emotion Engine tiers, and
 #     qemu-system-mips64el -M malta -cpu R4000 for the VR4300 tiers.
-#   ee:  assemble src/mips64/ee. PCSX2 is the EE runtime. This QEMU
+#   ee:  assemble src/mips64/R5900. PCSX2 is the EE runtime. This QEMU
 #     has no R5900 on the 11.0.3 line.
 #   rcp: scalar C99 (vectorizers off), scalar C99 (vectorizers on),
 #     and the handwritten VR4300 kernels, on Malta.
@@ -101,9 +101,17 @@ as_n64() {
 assemble_pair() {
     kind=$1
     want_n64=$2
+    case "$kind" in
+        ee) dir=src/mips64/R5900 ;;
+        rcp) dir=src/mips64/VR4300 ;;
+        *)
+            echo "mips: unknown kernel $kind" >&2
+            exit 1
+            ;;
+    esac
     if [ -n "$CLANG" ]; then
-        as_o32 "$OBJ/${kind}-mem.o" "src/mips64/$kind" "src/mips64/$kind/mem.s"
-        as_o32 "$OBJ/${kind}-string.o" "src/mips64/$kind" "src/mips64/$kind/string.s"
+        as_o32 "$OBJ/${kind}-mem.o" "$dir" "$dir/mem.s"
+        as_o32 "$OBJ/${kind}-string.o" "$dir" "$dir/string.s"
         need_sym "$OBJ/${kind}-mem.o" "rt_memcpy_$kind"
         need_sym "$OBJ/${kind}-mem.o" "rt_memset_$kind"
         need_sym "$OBJ/${kind}-mem.o" "rt_memcmp_$kind"
@@ -117,8 +125,8 @@ assemble_pair() {
             echo "mips: no n64 assembler for $kind" >&2
             exit 1
         fi
-        as_n64 "$OBJ/${kind}-mem-n64.o" "src/mips64/$kind" "src/mips64/$kind/mem.s"
-        as_n64 "$OBJ/${kind}-string-n64.o" "src/mips64/$kind" "src/mips64/$kind/string.s"
+        as_n64 "$OBJ/${kind}-mem-n64.o" "$dir" "$dir/mem.s"
+        as_n64 "$OBJ/${kind}-string-n64.o" "$dir" "$dir/string.s"
         echo "mips: assembled $kind (n64)"
     fi
     if [ -z "$CLANG" ] && [ -z "$GCC" ]; then
@@ -154,7 +162,9 @@ fi
 
 ran=0
 
-elf_cflags="-target mipsel-unknown-elf -march=mips64 -mabi=32 -msoft-float -G0 -fno-pic -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -Iinclude"
+# MIPS III. -march=mips64 makes clang emit movn, which R4000 and the
+# R5900 reject. That exception reboots the guest and reprints the table.
+elf_cflags="-target mipsel-unknown-elf -march=mips3 -mabi=32 -msoft-float -G0 -fno-pic -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -Iinclude"
 elf_off="$elf_cflags -fno-vectorize -fno-slp-vectorize"
 elf_on="$elf_cflags -fvectorize -fslp-vectorize"
 
@@ -195,12 +205,10 @@ drain_log() {
     fi
     tr -d '\r' < "$log" | awk -v seen="$SEEN" 'NR > seen { print }' |
         while IFS= read -r line; do
+            line=$(printf '%s\n' "$line" | sed 's/^\[[^]]*\] //')
             case "$line" in
-                *'| '*)
-                    printf '%s\n' "$line" | sed 's/^[^|]*//'
-                    ;;
-                *binary:*|*checks:*|*'FAIL '*|*'] ticks'|ticks|*'] mem'|mem|*'] str'|str|*'run complete'*)
-                    printf '%s\n' "$line" | sed 's/^\[[^]]*\] //'
+                *'| '*|*'+---'*|*backend:*|*'rt host oracle'*|*legend:*|*binary:*|*'host: R5900'*|*'host: VR4300'*|*'FAIL '*|*'run complete'*)
+                    printf '%s\n' "$line"
                     ;;
             esac
         done || true
@@ -240,10 +248,34 @@ wait_guest() {
         fi
         exit 1
     fi
-    if ! grep -q 'fail: 0' "$OBJ/$name.txt"; then
+    if grep -q 'FAIL ' "$OBJ/$name.txt"; then
         echo "mips: $name checks failed" >&2
         exit 1
     fi
+    if ! grep -q '| TOTAL' "$OBJ/$name.txt"; then
+        echo "mips: $name printed no table" >&2
+        exit 1
+    fi
+}
+
+banner() {
+    case "$1" in
+        scalar-off|n64-scalar-off)
+            echo "======== scalar, vectorize off ========"
+            ;;
+        scalar-on|n64-scalar-on)
+            echo "======== scalar, vectorize on ========"
+            ;;
+        ee)
+            echo "======== ee ========"
+            ;;
+        n64-rcp)
+            echo "======== rcp ========"
+            ;;
+        *)
+            echo "======== $1 ========"
+            ;;
+    esac
 }
 
 # OpenPS2BIOS 0.6. Published checksum from the v0.6 release asset.
@@ -328,7 +360,7 @@ EnableEEConsole = true
 EnableIOPConsole = true
 EOF
     : > "$log"
-    echo "-------- PCSX2 $name OpenPS2BIOS 0.6 --------"
+    banner "$name"
     "$pcsx2" -nogui -batch -fastboot -nofullscreen -earlyconsolelog \
         -logfile "$log" -datapath "$data" "$real" >/dev/null 2>"$OBJ/$name.err" &
     wait_guest "$name" "$!" "$log" 180
@@ -340,7 +372,7 @@ run_malta() {
     elf=$2
     log=$OBJ/$name.log
     : > "$log"
-    echo "-------- Malta R4000 $name --------"
+    banner "$name"
     qemu-system-mips64el -M malta -cpu R4000 -m 64 -nographic \
         -display none -monitor none -serial stdio -kernel "$elf" >"$log" 2>&1 &
     wait_guest "$name" "$!" "$log" 300
@@ -392,13 +424,13 @@ if [ "$mode" = "rcp" ] || [ "$mode" = "auto" ]; then
     else
         if [ -n "$CLANG" ]; then
             CC_N64=$CLANG
-            n64_off="-target mips64el-unknown-elf -march=mips64 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fno-vectorize -fno-slp-vectorize -Iinclude"
-            n64_on="-target mips64el-unknown-elf -march=mips64 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fvectorize -fslp-vectorize -Iinclude"
+            n64_off="-target mips64el-unknown-elf -march=mips3 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fno-vectorize -fno-slp-vectorize -Iinclude"
+            n64_on="-target mips64el-unknown-elf -march=mips3 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fvectorize -fslp-vectorize -Iinclude"
             n64_as="-target mips64el-unknown-elf -march=mips64 -mabi=64 -msoft-float -mno-abicalls"
         else
             CC_N64=$GCC
-            n64_off="-march=mips64 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fno-tree-vectorize -fno-tree-slp-vectorize -Iinclude"
-            n64_on="-march=mips64 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -ftree-vectorize -ftree-slp-vectorize -Iinclude"
+            n64_off="-march=mips3 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -fno-tree-vectorize -fno-tree-slp-vectorize -Iinclude"
+            n64_on="-march=mips3 -mabi=64 -msoft-float -mno-abicalls -fno-pic -G0 -ffreestanding -fno-builtin -fno-stack-protector -std=c99 -O2 -Wall -Wextra -Werror -fno-strict-aliasing -ftree-vectorize -ftree-slp-vectorize -Iinclude"
             n64_as="-march=mips64 -mabi=64 -msoft-float -mno-abicalls"
         fi
         echo "mips: N64 emulator is qemu-system-mips64el -M malta -cpu R4000"

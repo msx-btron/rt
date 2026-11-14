@@ -36,11 +36,11 @@ run_bin() {
 }
 
 asm32() {
-    "$cc" -m32 -c -o build/i386_rep.o src/i386/rep/mem.s
-    "$cc" -m32 -c -o build/i386_mmx.o src/i386/mmx/mem.s
-    "$cc" -m32 -c -o build/i386_pc98.o src/i386/pc98/mem.s
-    "$cc" -m32 -c -o build/i386_pc98_real.o src/i386/pc98/mem16.s
-    "$cc" -m32 -c -o build/i386_sse.o src/i386/sse/mem.s
+    "$cc" -m32 -c -o build/i386_rep.o src/x86_32/rep/mem.s
+    "$cc" -m32 -c -o build/i386_mmx.o src/x86_32/mmx/mem.s
+    "$cc" -m32 -c -o build/i386_pc98.o src/x86_32/pc98/mem.s
+    "$cc" -m32 -c -o build/i386_pc98_real.o src/x86_32/pc98/mem16.s
+    "$cc" -m32 -c -o build/i386_sse.o src/x86_32/sse/mem.s
     echo "asmcheck ok"
 }
 

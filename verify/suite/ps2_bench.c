@@ -58,7 +58,22 @@ size_t rt_strscat_ee(char *dst, const char *src, size_t n);
 void rt_strpad_ee(char *dst, const char *src, size_t width, int fill);
 
 static unsigned g_fail;
-static unsigned g_check;
+
+/* Same grid as verify/suite/test_host.c. There is no host libc here,
+   so the libc and coef cells stay N/A. The rt cell is one CP0 Count
+   delta, not a nanosecond measurement. Plain text: these guests have
+   no terminal, and a color ternary becomes movn, which R4000 rejects. */
+
+enum {
+    FN_MEMCPY, FN_MEMSET, FN_MEMCMP,
+    FN_STRLEN, FN_STRNLEN, FN_STRCPY, FN_STRNCPY, FN_STRCAT, FN_STRNCAT,
+    FN_STRCMP, FN_STRNCMP, FN_STRCHR, FN_STRRCHR, FN_STRSTR, FN_STRPBRK,
+    FN_STRSCPY, FN_STRSCAT, FN_STRPAD,
+    FN_COUNT
+};
+
+static unsigned g_chk[2][FN_COUNT];
+static unsigned g_bad[2][FN_COUNT];
 
 #if defined(RT_MALTA)
 /* QEMU Malta 16550. The 32-bit port is sign-extended into kseg1. */
@@ -129,22 +144,6 @@ static void puts(const char *s)
         putc(*s++);
 }
 
-static void putu(unsigned v)
-{
-    char b[16];
-    int i = 0;
-    if (v == 0) {
-        putc('0');
-        return;
-    }
-    while (v) {
-        b[i++] = (char)('0' + (v % 10u));
-        v /= 10u;
-    }
-    while (i)
-        putc(b[--i]);
-}
-
 static unsigned ee_count(void)
 {
     unsigned v;
@@ -152,9 +151,53 @@ static unsigned ee_count(void)
     return v;
 }
 
+static int starts(const char *s, const char *p)
+{
+    while (*p) {
+        if (*s == 0 || *s != *p)
+            return 0;
+        s++;
+        p++;
+    }
+    return 1;
+}
+
+static int fn_of(const char *what)
+{
+    const char *s = what;
+
+    if (starts(s, "scalar-"))
+        s += 7;
+    if (s[0] == 'h' && s[1] == 'i' && s[2] == 0)
+        return FN_MEMCMP;
+    if (starts(s, "strnlen")) return FN_STRNLEN;
+    if (starts(s, "strncpy")) return FN_STRNCPY;
+    if (starts(s, "strncat")) return FN_STRNCAT;
+    if (starts(s, "strncmp")) return FN_STRNCMP;
+    if (starts(s, "strrchr")) return FN_STRRCHR;
+    if (starts(s, "strscpy")) return FN_STRSCPY;
+    if (starts(s, "strscat")) return FN_STRSCAT;
+    if (starts(s, "strpbrk")) return FN_STRPBRK;
+    if (starts(s, "strpad")) return FN_STRPAD;
+    if (starts(s, "strstr")) return FN_STRSTR;
+    if (starts(s, "strchr")) return FN_STRCHR;
+    if (starts(s, "strcmp")) return FN_STRCMP;
+    if (starts(s, "strcpy")) return FN_STRCPY;
+    if (starts(s, "strcat")) return FN_STRCAT;
+    if (starts(s, "strlen")) return FN_STRLEN;
+    if (starts(s, "memcpy")) return FN_MEMCPY;
+    if (starts(s, "memset")) return FN_MEMSET;
+    if (starts(s, "memcmp")) return FN_MEMCMP;
+    return -1;
+}
+
 static void expect(int ok, const char *what)
 {
-    g_check++;
+    int side = starts(what, "scalar-") ? 0 : 1;
+    int fn = fn_of(what);
+
+    if (fn >= 0)
+        g_chk[side][fn]++;
     if (!ok) {
         if (g_fail < 8u) {
             puts("FAIL ");
@@ -162,6 +205,8 @@ static void expect(int ok, const char *what)
             putc('\n');
         }
         g_fail++;
+        if (fn >= 0)
+            g_bad[side][fn]++;
     }
 }
 
@@ -221,7 +266,6 @@ static unsigned char page[8192] __attribute__((aligned(4096)));
 static void check_mem(void)
 {
     size_t n, da, sa;
-    puts("mem\n");
     for (n = 0; n <= 96; n++) {
         for (da = 0; da < 16; da++) {
             for (sa = 0; sa < 16; sa++) {
@@ -284,7 +328,6 @@ static void check_strings(void)
 {
     static const size_t lens[] = { 0, 1, 2, 7, 8, 15, 16, 17, 31, 32, 63, 64 };
     size_t i, n, off;
-    puts("str\n");
     for (i = 0; i < sizeof lens / sizeof lens[0]; i++) {
         n = lens[i];
         for (off = 0; off < 16; off++) {
@@ -389,57 +432,209 @@ static unsigned time_call(void (*fn)(void), unsigned reps)
     return b - a;
 }
 
-static void work_scalar_memcpy(void)
-{
-    rt_memcpy_scalar(dsta, srcb, 1024);
-}
-#if defined(RT_WIDE)
-static void work_ee_memcpy(void) { rt_memcpy_ee(dstb, srcb, 1024); }
-static void work_ee_memset(void) { rt_memset_ee(dstb, 0x2A, 1024); }
-static void work_ee_memcmp(void) { (void)rt_memcmp_ee(srcb, dsta, 1024); }
-static void work_ee_strlen(void) { (void)rt_strlen_ee(sa); }
-static void work_ee_strcpy(void) { rt_strcpy_ee(sb, sa); }
-static void work_ee_strcmp(void) { (void)rt_strcmp_ee(sa, sb); }
-#endif
+static void work_scalar_memcpy(void) { rt_memcpy_scalar(dsta, srcb, 1024); }
 static void work_scalar_memset(void) { rt_memset_scalar(dsta, 0x2A, 1024); }
 static void work_scalar_memcmp(void) { (void)rt_memcmp_scalar(srcb, dsta, 1024); }
 static void work_scalar_strlen(void) { (void)rt_strlen(sa); }
 static void work_scalar_strcpy(void) { rt_strcpy(sb, sa); }
 static void work_scalar_strcmp(void) { (void)rt_strcmp(sa, sb); }
 
-static void row(const char *name, const char *kind, unsigned ticks)
+#if defined(RT_WIDE)
+static void work_ee_memcpy(void) { rt_memcpy_ee(dstb, srcb, 1024); }
+static void work_ee_memset(void) { rt_memset_ee(dstb, 0x2A, 1024); }
+static void work_ee_memcmp(void) { (void)rt_memcmp_ee(srcb, dsta, 1024); }
+static void work_ee_strlen(void) { (void)rt_strlen_ee(sa); }
+static void work_ee_strnlen(void) { (void)rt_strnlen_ee(sa, 64); }
+static void work_ee_strcpy(void) { rt_strcpy_ee(sb, sa); }
+static void work_ee_strncpy(void) { rt_strncpy_ee(sb, sa, 64); }
+static void work_ee_strcat(void)
+{
+    sb[0] = 'p';
+    sb[1] = 0;
+    rt_strcat_ee(sb, sa);
+}
+static void work_ee_strncat(void)
+{
+    sb[0] = 'p';
+    sb[1] = 0;
+    rt_strncat_ee(sb, sa, 8);
+}
+static void work_ee_strcmp(void) { (void)rt_strcmp_ee(sa, sb); }
+static void work_ee_strncmp(void) { (void)rt_strncmp_ee(sa, sb, 64); }
+static void work_ee_strchr(void) { (void)rt_strchr_ee(sa, 'A'); }
+static void work_ee_strrchr(void) { (void)rt_strrchr_ee(sa, 'A'); }
+static void work_ee_strstr(void) { (void)rt_strstr_ee(sa, "ABC"); }
+static void work_ee_strpbrk(void) { (void)rt_strpbrk_ee(sa, "Z"); }
+static void work_ee_strscpy(void) { (void)rt_strscpy_ee(sb, sa, 64); }
+static void work_ee_strscat(void)
+{
+    sb[0] = 'p';
+    sb[1] = 0;
+    (void)rt_strscat_ee(sb, sa, 80);
+}
+static void work_ee_strpad(void) { rt_strpad_ee(sb, sa, 32, 'x'); }
+#endif
+
+struct slot {
+    const char *name;
+    int fn;
+    int group;
+    void (*work)(void);
+};
+
+static const struct slot scalar_rows[] = {
+    { "memcpy", FN_MEMCPY, 0, work_scalar_memcpy },
+    { "memset", FN_MEMSET, 0, work_scalar_memset },
+    { "memcmp", FN_MEMCMP, 0, work_scalar_memcmp },
+    { "strlen", FN_STRLEN, 1, work_scalar_strlen },
+    { "strcpy", FN_STRCPY, 1, work_scalar_strcpy },
+    { "strcmp", FN_STRCMP, 1, work_scalar_strcmp }
+};
+
+#if defined(RT_WIDE)
+static const struct slot wide_rows[] = {
+    { "memcpy", FN_MEMCPY, 0, work_ee_memcpy },
+    { "memset", FN_MEMSET, 0, work_ee_memset },
+    { "memcmp", FN_MEMCMP, 0, work_ee_memcmp },
+    { "strlen", FN_STRLEN, 1, work_ee_strlen },
+    { "strnlen", FN_STRNLEN, 1, work_ee_strnlen },
+    { "strcpy", FN_STRCPY, 1, work_ee_strcpy },
+    { "strncpy", FN_STRNCPY, 1, work_ee_strncpy },
+    { "strcat", FN_STRCAT, 1, work_ee_strcat },
+    { "strncat", FN_STRNCAT, 1, work_ee_strncat },
+    { "strcmp", FN_STRCMP, 1, work_ee_strcmp },
+    { "strncmp", FN_STRNCMP, 1, work_ee_strncmp },
+    { "strchr", FN_STRCHR, 1, work_ee_strchr },
+    { "strrchr", FN_STRRCHR, 1, work_ee_strrchr },
+    { "strstr", FN_STRSTR, 1, work_ee_strstr },
+    { "strpbrk", FN_STRPBRK, 1, work_ee_strpbrk },
+    { "strscpy", FN_STRSCPY, 1, work_ee_strscpy },
+    { "strscat", FN_STRSCAT, 1, work_ee_strscat },
+    { "strpad", FN_STRPAD, 1, work_ee_strpad }
+};
+#endif
+
+static void put_spaces(int n)
+{
+    while (n-- > 0)
+        putc(' ');
+}
+
+static void put_right(const char *s, int width)
+{
+    int n = 0;
+    while (s[n] && n < width) {
+        putc(s[n]);
+        n++;
+    }
+    put_spaces(width - n);
+}
+
+static void put_left_u(unsigned v, int width)
+{
+    char b[16];
+    int i = 0;
+    if (v == 0)
+        b[i++] = '0';
+    while (v) {
+        b[i++] = (char)('0' + (v % 10u));
+        v /= 10u;
+    }
+    put_spaces(width - i);
+    while (i)
+        putc(b[--i]);
+}
+
+static void put_left_s(const char *s, int width)
+{
+    int n = 0;
+    while (s[n])
+        n++;
+    put_spaces(width - n);
+    puts(s);
+}
+
+static void put_rule(void)
+{
+    puts("+------------------+----------+----------+--------+------+------------+\n");
+}
+
+static void put_result(const char *name, unsigned ticks,
+                       unsigned checks, unsigned fails)
 {
     puts("| ");
-    puts(name);
+    put_right(name, 16);
     puts(" | ");
-    puts(kind);
+    put_left_s("N/A", 8);
     puts(" | ");
-    putu(ticks);
+    put_left_u(ticks, 8);
+    puts(" | ");
+    put_left_u(checks, 6);
+    puts(" | ");
+    put_left_u(fails, 4);
+    puts(" | ");
+    put_left_s("N/A", 8);
     puts(" |\n");
 }
 
-static void time_all(void)
+static void put_total(unsigned checks, unsigned fails)
 {
-    unsigned reps = 100;
-    puts("ticks\n");
-    puts("| function | kernel | ticks |\n");
-    fill(srcb, 1024, 1);
-    plant(sa, 64, -1);
-    o_memcpy(sb, sa, 65);
-    row("memcpy", "scalar", time_call(work_scalar_memcpy, reps));
-    row("memset", "scalar", time_call(work_scalar_memset, reps));
-    row("memcmp", "scalar", time_call(work_scalar_memcmp, reps));
-    row("strlen", "scalar", time_call(work_scalar_strlen, reps));
-    row("strcpy", "scalar", time_call(work_scalar_strcpy, reps));
-    row("strcmp", "scalar", time_call(work_scalar_strcmp, reps));
-#if defined(RT_WIDE)
-    row("memcpy", RT_KIND, time_call(work_ee_memcpy, reps));
-    row("memset", RT_KIND, time_call(work_ee_memset, reps));
-    row("memcmp", RT_KIND, time_call(work_ee_memcmp, reps));
-    row("strlen", RT_KIND, time_call(work_ee_strlen, reps));
-    row("strcpy", RT_KIND, time_call(work_ee_strcpy, reps));
-    row("strcmp", RT_KIND, time_call(work_ee_strcmp, reps));
+    puts("| TOTAL            |          |          | ");
+    put_left_u(checks, 6);
+    puts(" | ");
+    put_left_u(fails, 4);
+    puts(" |            |\n");
+}
+
+static void put_table(const char *backend, int side,
+                      const struct slot *rows, int nrows)
+{
+    unsigned tc = 0;
+    unsigned tf = 0;
+    int i;
+
+    puts("\n== backend: ");
+    puts(backend);
+    puts(" ==\n");
+    put_rule();
+    puts("| function         | libc ns  | rt ns    | checks | fail | coef       |\n");
+    put_rule();
+    for (i = 0; i < nrows; i++) {
+        unsigned ticks = 0;
+        if (g_fail == 0)
+            ticks = time_call(rows[i].work, 100);
+        put_result(rows[i].name, ticks,
+                   g_chk[side][rows[i].fn], g_bad[side][rows[i].fn]);
+        tc += g_chk[side][rows[i].fn];
+        tf += g_bad[side][rows[i].fn];
+    }
+    put_rule();
+    put_total(tc, tf);
+    put_rule();
+}
+
+static void put_preamble(void)
+{
+    putc('\n');
+    puts("rt host oracle — libc vs rt · one table per binary\n");
+#if defined(RT_VECTORIZE)
+    puts("binary: scalar  ·  vectorize: on\n");
+#elif defined(RT_WIDE)
+    puts("binary: ");
+    puts(RT_KIND);
+    putc('\n');
+#else
+    puts("binary: scalar  ·  vectorize: off\n");
 #endif
+#if defined(RT_MALTA)
+    puts("host: VR4300 · qemu malta R4000 · CP0 Count\n");
+#else
+    puts("host: R5900 · OpenPS2BIOS · CP0 Count\n");
+#endif
+    putc('\n');
+    puts("rt host oracle — one table per accessible backend\n");
+    puts("legend: rt column is one CP0 Count delta, not nanoseconds · ");
+    puts("libc and coef are N/A · N/A = no libc symbol\n");
 }
 
 int main(void)
@@ -448,18 +643,18 @@ int main(void)
     clear_bss();
 #endif
     sio_init();
-    puts("binary: ");
-    puts(RT_BINARY);
-    putc('\n');
     check_mem();
     check_strings();
-    puts("checks: ");
-    putu(g_check);
-    puts(" fail: ");
-    putu(g_fail);
-    putc('\n');
-    if (g_fail == 0)
-        time_all();
+    fill(srcb, 1024, 1);
+    plant(sa, 64, -1);
+    o_memcpy(sb, sa, 65);
+    put_preamble();
+    put_table("scalar", 0, scalar_rows,
+              (int)(sizeof scalar_rows / sizeof scalar_rows[0]));
+#if defined(RT_WIDE)
+    put_table(RT_KIND, 1, wide_rows,
+              (int)(sizeof wide_rows / sizeof wide_rows[0]));
+#endif
     puts("[BENCH] run complete\n");
     return g_fail ? 1 : 0;
 }

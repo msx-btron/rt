@@ -377,9 +377,9 @@ run_ia32() {
     clang -target i386-linux-musl $cflags \
         -isystem "$sys32/usr/include" -Iinclude -DRT_TABLE_SIMD \
         -c -o "$obj/test_host_i386.o" verify/suite/test_host.c
-    clang -target i386-linux-musl -c -o "$obj/rep.o" src/i386/rep/mem.s
-    clang -target i386-linux-musl -c -o "$obj/mmx.o" src/i386/mmx/mem.s
-    clang -target i386-linux-musl -c -o "$obj/sse.o" src/i386/sse/mem.s
+    clang -target i386-linux-musl -c -o "$obj/rep.o" src/x86_32/rep/mem.s
+    clang -target i386-linux-musl -c -o "$obj/mmx.o" src/x86_32/mmx/mem.s
+    clang -target i386-linux-musl -c -o "$obj/sse.o" src/x86_32/sse/mem.s
     ld.lld -m elf_i386 \
         -dynamic-linker /lib/ld-musl-i386.so.1 \
         "$sys32/usr/lib/crt1.o" \
