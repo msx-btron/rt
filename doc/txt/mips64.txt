@@ -24,6 +24,18 @@ test-suite table while that emulator is still running:
   scalar C99, vectorizers on
   handwritten kernel
 
+Directory names are the CPUs. Symbols stay rt_*_ee and rt_*_rcp.
+scripts/mips64.sh still selects those kernels with the modes ee and rcp.
+
+The guest prints the host-oracle columns in plain text. The heading is
+"== backend:". There is no ANSI color. A color ternary compiled with
+-march=mips64 became movn. R4000 rejects that opcode, the Malta BIOS
+reloads the ELF, and the preamble repeats until the process is killed.
+Guest C is -march=mips3. The assembler stays -march=mips64, because the
+MMI operations are .word encodings. The column title still says "rt ns"
+so the grid matches the other hosts. The legend says that cell is one
+CP0 Count delta. libc and coef are N/A. These guests link no libc.
+
 The scalar source is src/common/scalar/. Each console gets its own
 compilation. PlayStation 2 is o32, so size_t is 4 and the vectorizer-off
 memcpy widens to ldl/ldr (68 of those in rt_memcpy_scalar, no ld/sd).
@@ -66,81 +78,120 @@ it writes that port.
 
 Measured
 
-One `make mips` on this Mac, 2026-11-15. PCSX2 2.8.2 under Rosetta
-booted OpenPS2BIOS 0.6. Each EE log contains
+One `make mips` on this Mac, 2026-11-15, with the plain-text printer.
+PCSX2 2.8.2 under Rosetta booted OpenPS2BIOS 0.6. Each EE log contains
 `BIOS Found: USA v00.06(05/11/2026) Devel` and
-`[openbios:ee] OpenPS2BIOS 0.6 ready`. The
-PCSX2 tick rows match an earlier boot that used a different ROM.
-QEMU 11.0.3, system mips64el, Malta, -cpu R4000, 64 MiB. Four warm-up
-calls, then 100 repetitions. The tick is one CP0 Count delta, not a
-median of boots. Memory rows are 1024 bytes. String rows are 64
-characters. The Count moved between Malta boots in this session, so the
-QEMU column is this run's sample of the emulator clock.
+`[openbios:ee] OpenPS2BIOS 0.6 ready`. QEMU 11.0.3, system mips64el,
+Malta, -cpu R4000, 64 MiB. Four warm-up calls, then 100 repetitions.
+The rt cell is one CP0 Count delta of that call. It is not a
+nanosecond and not a median of boots. Memory rows are 1024 bytes.
+String rows are 64 characters. The Count moved between Malta boots in
+this session, so the QEMU column is this run's sample. These clocks
+stay out of bench.html.
 
-PCSX2, checks 25025 fail 0, then the Emotion Engine binary at
-126237 fail 0. The scalar column beside ee matches scalar-off.
+Scalar tables time six functions. Their checks are memcpy 24832,
+memcmp 1, strlen 192, and 0 for memset, strcpy, and strcmp.
+TOTAL checks 25025, fail 0. The wide tables time the full string set.
+Check counts match on both machines: memcpy 24832, memset 24832,
+memcmp 49411, strlen 194, strnlen 384, strcpy 384, strncpy 384,
+strcat 1, strncat 2, strcmp 193, strncmp 193, strchr 195, strrchr 193,
+strstr 4, strpbrk 3, strscpy 4, strscat 1, strpad 2. TOTAL checks
+101212, fail 0.
 
-  | function | kernel | ticks |
-  | memcpy | scalar | 109101 |
-  | memset | scalar | 61701 |
-  | memcmp | scalar | 5001 |
-  | strlen | scalar | 15801 |
-  | strcpy | scalar | 20501 |
-  | strcmp | scalar | 23601 |
+PCSX2, vectorizers off. The scalar table inside the ee binary printed
+the same Count.
 
-  | function | kernel | ticks |
-  | memcpy | scalar | 719401 |
-  | memset | scalar | 514601 |
-  | memcmp | scalar | 5001 |
-  | strlen | scalar | 19201 |
-  | strcpy | scalar | 25801 |
-  | strcmp | scalar | 28901 |
+  memcpy 110701
+  memset 63202
+  memcmp 6602
+  strlen 17202
+  strcpy 22002
+  strcmp 25102
 
-  | function | kernel | ticks |
-  | memcpy | ee | 43901 |
-  | memset | ee | 32101 |
-  | memcmp | ee | 4201 |
-  | strlen | ee | 9401 |
-  | strcpy | ee | 12101 |
-  | strcmp | ee | 17301 |
+PCSX2, vectorizers on.
 
-Malta R4000. Scalar binaries, checks 25025 fail 0. VR4300 binary,
-checks 126237 fail 0.
+  memcpy 721001
+  memset 516102
+  memcmp 6602
+  strlen 20602
+  strcpy 27302
+  strcmp 30402
 
-  | function | kernel | ticks |
-  | memcpy | scalar | 4160 |
-  | memset | scalar | 1920 |
-  | memcmp | scalar | 1440 |
-  | strlen | scalar | 1440 |
-  | strcpy | scalar | 1600 |
-  | strcmp | scalar | 1440 |
+PCSX2, ee.
 
-  | function | kernel | ticks |
-  | memcpy | scalar | 23200 |
-  | memset | scalar | 12800 |
-  | memcmp | scalar | 1120 |
-  | strlen | scalar | 1440 |
-  | strcpy | scalar | 13600 |
-  | strcmp | scalar | 1760 |
+  memcpy 45502
+  memset 33602
+  memcmp 5802
+  strlen 10802
+  strnlen 13802
+  strcpy 13602
+  strncpy 15502
+  strcat 125602
+  strncat 20002
+  strcmp 5402
+  strncmp 6702
+  strchr 6002
+  strrchr 89902
+  strstr 10802
+  strpbrk 52502
+  strscpy 99602
+  strscat 109102
+  strpad 48202
 
-  | function | kernel | ticks |
-  | memcpy | scalar | 3040 |
-  | memset | scalar | 1920 |
-  | memcmp | scalar | 1920 |
-  | strlen | scalar | 1440 |
-  | strcpy | scalar | 1440 |
-  | strcmp | scalar | 1600 |
-  | memcpy | rcp | 3040 |
-  | memset | rcp | 2240 |
-  | memcmp | rcp | 1280 |
-  | strlen | rcp | 1440 |
-  | strcpy | rcp | 1600 |
-  | strcmp | rcp | 2080 |
+Malta, vectorizers off.
 
-On this QEMU the ld/sd kernel does not beat the vectorizer-off scalar.
-That is the translator's cost per instruction. The unroll stays. It is
-the body a VR4300 should run, and it passed the same contract checks as
-the Emotion Engine kernel.
+  memcpy 4000
+  memset 1120
+  memcmp 480
+  strlen 480
+  strcpy 480
+  strcmp 800
+
+Malta, vectorizers on.
+
+  memcpy 22720
+  memset 12800
+  memcmp 480
+  strlen 640
+  strcpy 14560
+  strcmp 800
+
+Malta, scalar column of the VR4300 binary.
+
+  memcpy 3360
+  memset 1120
+  memcmp 480
+  strlen 480
+  strcpy 640
+  strcmp 480
+
+Malta, rcp.
+
+  memcpy 2080
+  memset 1440
+  memcmp 320
+  strlen 640
+  strnlen 800
+  strcpy 800
+  strncpy 960
+  strcat 4160
+  strncat 800
+  strcmp 320
+  strncmp 480
+  strchr 320
+  strrchr 1760
+  strstr 480
+  strpbrk 1600
+  strscpy 3360
+  strscat 3840
+  strpad 1600
+
+In this Malta sample the VR4300 memcpy Count is 2080. That is below
+the scalar column in the same binary (3360) and below the scalar-off
+binary (4000). memset goes the other way: 1440 against 1120. This is
+one emulator sample. The unroll stays. It is the body a VR4300 should
+run, and it passed the same contract checks as the Emotion Engine
+kernel.
 
 
 Not used

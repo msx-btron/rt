@@ -85,9 +85,10 @@ verify: rt_memset_neon, n < 2^64 checked
 ├── src
 │   ├── aarch64
 │   ├── common
-│   ├── x86_32
+│   ├── mips64
 │   ├── riscv32
 │   ├── riscv64
+│   ├── x86_32
 │   └── x86_64
 └── verify
     ├── ci
@@ -102,6 +103,7 @@ $ make
 $ make security
 $ make verify
 $ make riscv
+$ make mips
 ```
 
 ## Credits
