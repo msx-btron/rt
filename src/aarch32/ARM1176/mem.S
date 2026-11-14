@@ -155,7 +155,6 @@ rt_memcmp_arm1176:
 .Lmp_rw:
     sub r0, r0, #4
     sub r1, r1, #4
-    add r2, r2, #4
 .Lmp_b:
     cmp r2, #0
     beq .Lmp_0

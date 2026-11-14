@@ -198,27 +198,20 @@ RT_FN(strscpy):
     mov r4, r0
     mov r5, r1
     mov r6, r2
-    mov r7, #0
+    mov r0, r1
+    bl RT_FN(strlen)
+    mov r7, r0
+    sub r6, r6, #1
+    cmp r7, r6
+    bhi 2f
+    mov r6, r7
 2:
-    add r3, r7, #1
-    cmp r3, r6
-    bhs 3f
-    ldrb r3, [r5, r7]
-    cmp r3, #0
-    beq 3f
-    strb r3, [r4, r7]
-    add r7, r7, #1
-    b 2b
-3:
+    mov r0, r4
+    mov r1, r5
+    mov r2, r6
+    bl RT_FN(memcpy)
     mov r3, #0
-    strb r3, [r4, r7]
-4:
-    ldrb r3, [r5, r7]
-    cmp r3, #0
-    beq 5f
-    add r7, r7, #1
-    b 4b
-5:
+    strb r3, [r4, r6]
     mov r0, r7
     pop {r4-r7, pc}
 
@@ -249,22 +242,26 @@ RT_FN(strscat):
 .global RT_FN(strpad)
 .type RT_FN(strpad), %function
 RT_FN(strpad):
-    uxtb r3, r3
+    push {r4-r7, lr}
+    mov r4, r0
+    mov r5, r1
+    mov r6, r2
+    uxtb r7, r3
+    mov r0, r5
+    mov r1, r6
+    bl RT_FN(strnlen)
+    mov r2, r0
+    push {r2}
+    mov r0, r4
+    mov r1, r5
+    bl RT_FN(memcpy)
+    pop {r2}
+    cmp r2, r6
+    bhs 1f
+    sub r3, r6, r2
+    add r0, r4, r2
+    mov r1, r7
+    mov r2, r3
+    bl RT_FN(memset)
 1:
-    cmp r2, #0
-    beq 3f
-    ldrb ip, [r1]
-    cmp ip, #0
-    beq 2f
-    strb ip, [r0], #1
-    add r1, r1, #1
-    subs r2, r2, #1
-    b 1b
-2:
-    cmp r2, #0
-    beq 3f
-    strb r3, [r0], #1
-    subs r2, r2, #1
-    b 2b
-3:
-    bx lr
+    pop {r4-r7, pc}

@@ -464,27 +464,20 @@ rt_strscpy_m0:
     mov r4, r0
     mov r5, r1
     mov r6, r2
-    movs r7, #0
-.Lsya:
-    adds r3, r7, #1
-    cmp r3, r6
-    bhs .Lsyb
-    ldrb r3, [r5, r7]
-    cmp r3, #0
-    beq .Lsyb
-    strb r3, [r4, r7]
-    adds r7, r7, #1
-    b .Lsya
+    mov r0, r1
+    bl rt_strlen_m0
+    mov r7, r0
+    subs r6, r6, #1
+    cmp r7, r6
+    bhi .Lsyb
+    mov r6, r7
 .Lsyb:
+    mov r0, r4
+    mov r1, r5
+    mov r2, r6
+    bl rt_memcpy_m0
     movs r3, #0
-    strb r3, [r4, r7]
-.Lsyc:
-    ldrb r3, [r5, r7]
-    cmp r3, #0
-    beq .Lsyd
-    adds r7, r7, #1
-    b .Lsyc
-.Lsyd:
+    strb r3, [r4, r6]
     mov r0, r7
     pop {r4-r7, pc}
 
@@ -517,25 +510,26 @@ rt_strscat_m0:
 .type rt_strpad_m0, %function
 .thumb_func
 rt_strpad_m0:
-    push {r4, lr}
-    uxtb r3, r3
-.Lda:
-    cmp r2, #0
-    beq .Ldd
-    ldrb r4, [r1]
-    cmp r4, #0
-    beq .Ldb
-    strb r4, [r0]
-    adds r0, r0, #1
-    adds r1, r1, #1
-    subs r2, r2, #1
-    b .Lda
-.Ldb:
-    cmp r2, #0
-    beq .Ldd
-    strb r3, [r0]
-    adds r0, r0, #1
-    subs r2, r2, #1
-    b .Ldb
+    push {r4-r7, lr}
+    mov r4, r0
+    mov r5, r1
+    mov r6, r2
+    uxtb r7, r3
+    mov r0, r5
+    mov r1, r6
+    bl rt_strnlen_m0
+    mov r2, r0
+    push {r2}
+    mov r0, r4
+    mov r1, r5
+    bl rt_memcpy_m0
+    pop {r2}
+    cmp r2, r6
+    bhs .Ldd
+    subs r3, r6, r2
+    adds r0, r4, r2
+    mov r1, r7
+    mov r2, r3
+    bl rt_memset_m0
 .Ldd:
-    pop {r4, pc}
+    pop {r4-r7, pc}

@@ -21,6 +21,20 @@ Reset:
     dsb
     isb
 #endif
+#ifdef RT_DWT
+    /* DEMCR.TRCENA, then DWT_CTRL.CYCCNTENA. A stuck CYCCNT stays N/A. */
+    ldr r0, =0xE000EDFC
+    ldr r1, [r0]
+    movs r2, #1
+    lsls r2, r2, #24
+    orrs r1, r2
+    str r1, [r0]
+    ldr r0, =0xE0001000
+    ldr r1, [r0]
+    movs r2, #1
+    orrs r1, r2
+    str r1, [r0]
+#endif
     ldr r0, =__bss_start
     ldr r1, =__bss_end
     movs r2, #0

@@ -101,6 +101,8 @@ verify: rt_memset_neon, n < 2^64 checked
     └── suite
 ```
 
+`src/aarch32` is the AArch32 instruction streams: ARM1176, AArch32 NEON, and Cortex-M0, M3, M4, M7, M33, and M55. ESP32 is Xtensa or RISC-V, and Pi 5 is AArch64 only. Neither lives in this tree. `$ make aarch32` prints one table for each of the nine guests. The hardware job waits for a 32-bit Pi runner.
+
 ## Makefile Targets
 
 ```sh

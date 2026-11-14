@@ -16,6 +16,33 @@ _start:
     str r2, [r0], #4
     b 1b
 2:
+#ifdef RT_NEON
+    /* virt leaves CP10/CP11 off. The first VLD1 is then an undefined
+       instruction, and with no UND vector the guest spins. */
+.fpu neon-vfpv4
+    mrc p15, 0, r0, c1, c0, 2
+    orr r0, r0, #0x00F00000
+    mcr p15, 0, r0, c1, c0, 2
+    isb
+    mov r0, #0x40000000
+    vmsr fpexc, r0
+#endif
+#ifdef RT_PMU
+    /* ARMv7 cycle counter. If it stays put, the bench prints N/A. */
+    mrc p15, 0, r0, c9, c14, 0
+    orr r0, r0, #1
+    mcr p15, 0, r0, c9, c14, 0
+    mov r0, #0x80000000
+    mcr p15, 0, r0, c9, c12, 1
+    mrc p15, 0, r0, c9, c12, 0
+    orr r0, r0, #5
+    mcr p15, 0, r0, c9, c12, 0
+#endif
+#ifdef RT_PMU6
+    /* ARM1176 cycle counter, CP15 c15. Not the ARMv7 c9 PMU. */
+    mov r0, #5
+    mcr p15, 0, r0, c15, c12, 0
+#endif
     bl main
     mov r0, #0
     bl sh_exit

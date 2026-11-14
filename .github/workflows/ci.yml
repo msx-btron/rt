@@ -177,7 +177,7 @@ jobs:
 
   # ------------------------------------------------------------------
   # AArch32: ARM1176, AArch32 NEON, Thumb-1, Thumb-2, Helium.
-  # qemu-system-arm. No libc. Guest clocks stay N/A.
+  # qemu-system-arm. Nine tables. Ticks are not silicon.
   # ------------------------------------------------------------------
   aarch32:
     name: AArch32 family
@@ -188,9 +188,22 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            clang lld qemu-system-arm python3
+            clang lld qemu-system-arm python3 curl
       - name: AArch32 contracts
         run: sh scripts/aarch32.sh
+
+  # Physical 32-bit armhf (Pi 1 through Pi 4). Pi 5 cannot run AArch32.
+  # Commented until a runner labeled aarch32 finishes one green run.
+  # Do not add this job to summary.needs while it is commented.
+
+#  aarch32-hw:
+#    name: AArch32 HW
+#    runs-on: [self-hosted, aarch32]
+#    timeout-minutes: 30
+#    steps:
+#      - uses: actions/checkout@v4
+#      - name: AArch32 hardware table
+#        run: sh scripts/aarch32_hw.sh
 
   # ------------------------------------------------------------------
   # Physical RV64GC + RVV 1.0. SpacemiT K1 on a Banana Pi BPI-F3.
@@ -318,6 +331,7 @@ jobs:
           echo "riscv-rvv32:        ${{ needs.riscv-rvv32.result }}"
           echo "riscv-rvv64:        ${{ needs.riscv-rvv64.result }}"
           echo "aarch32:            ${{ needs.aarch32.result }}"
+          echo "aarch32-hw:         disabled"
           echo "riscv-hw-rvv64:     disabled"
           echo "mips-rcp:           ${{ needs.mips-rcp.result }}"
           echo "mips-ee:            ${{ needs.mips-ee.result }}"
