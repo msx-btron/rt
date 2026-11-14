@@ -76,7 +76,7 @@ run_width() {
     : > "$log"
     qemu-system-riscv${xlen} \
         -machine virt \
-        -cpu rv${xlen},v=true,vlen=128,elen=64 \
+        -cpu rv${xlen},v=true,vext_spec=v1.0,vlen=128,elen=64 \
         -m 4M \
         -bios none \
         -display none \
@@ -135,6 +135,40 @@ fetch() {
     curl -fL --retry 3 --retry-delay 2 --silent --show-error \
         -o "$dest.partial" "$url"
     mv "$dest.partial" "$dest"
+}
+
+# Ubuntu 24.04's QEMU package ships the rv64 OpenSBI blob only.
+# rv32 must be named with -bios or the guest exits before /init.
+resolve_bios() {
+    xlen=$1
+    name=opensbi-riscv${xlen}-generic-fw_dynamic.bin
+    dest="$cache/$name"
+    if [ -f "$dest" ]; then
+        printf '%s\n' "$dest"
+        return 0
+    fi
+    for p in \
+        "/usr/share/qemu/$name" \
+        "/usr/lib/riscv${xlen}-linux-gnu/opensbi/generic/fw_dynamic.bin" \
+        "/opt/homebrew/share/qemu/$name" \
+        "/usr/local/share/qemu/$name"
+    do
+        if [ -f "$p" ]; then
+            printf '%s\n' "$p"
+            return 0
+        fi
+    done
+    mkdir -p "$cache"
+    echo "riscv: fetch OpenSBI rv${xlen} fw_dynamic" >&2
+    curl -fL --retry 3 --retry-delay 2 --silent --show-error \
+        -o "$dest.partial" \
+        "https://raw.githubusercontent.com/qemu/qemu/v10.0.0/pc-bios/$name"
+    mv "$dest.partial" "$dest"
+    if [ ! -s "$dest" ]; then
+        echo "riscv: OpenSBI rv${xlen} firmware is empty" >&2
+        exit 1
+    fi
+    printf '%s\n' "$dest"
 }
 
 extract_apk() {
@@ -285,7 +319,7 @@ prepare_rv64() {
     g_libdir=""
     g_root=$root
     g_kern=$kern
-    g_cpu="rv64,v=true,vlen=128,elen=64"
+    g_cpu="rv64,v=true,vext_spec=v1.0,vlen=128,elen=64"
     g_libc="Alpine musl"
     g_obj=$cache/obj-riscv64
     g_initrd=$cache/rt-initrd-rvv64.gz
@@ -358,7 +392,7 @@ prepare_rv32() {
     g_libdir=$root/lib
     g_root=$root
     g_kern=$cache/Image-bootlin-rv32-musl
-    g_cpu="rv32,v=true,vlen=128,elen=64,f=true,d=true"
+    g_cpu="rv32,v=true,vext_spec=v1.0,vlen=128,elen=64,f=true,d=true"
     g_libc="Bootlin musl"
     g_obj=$cache/obj-riscv32
     g_initrd=$cache/rt-initrd-rvv32.gz
@@ -513,9 +547,12 @@ EOF
     mkfifo "$fifo"
     tee "$g_log" < "$fifo" &
     tpid=$!
+    bios=$(resolve_bios "$g_xlen")
+    echo "riscv: bios $bios"
     qemu-system-riscv${g_xlen} \
         -machine virt \
         -cpu "$g_cpu" \
+        -bios "$bios" \
         -accel tcg -m 512 -smp 1 \
         -nic none \
         -kernel "$g_kern" \
