@@ -12,11 +12,13 @@
 # make mips                → PlayStation 2 tiers under PCSX2, and
 #                            Nintendo 64 tiers under
 #                            qemu-system-mips64el -M malta -cpu R4000.
+# make aarch32             → QEMU system: ARM1176, AArch32 NEON,
+#                            Cortex-M0, M3, M4, M7, M33, M55.
 # scripts/riscv_hw.sh      → native riscv64 board. Cloud-V BPI-F3 runs it.
 # make security            → clang --analyze, flawfinder, cppcheck, ASCII report
 # make verify              → coqc verify/models/MemsetNeon.v (rt_memset_neon, n < 2^64)
 #
-.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 riscv mips clean verify \
+.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 riscv mips aarch32 clean verify \
 	security security-report sec-scalar sec-verify
 
 all: test
@@ -44,6 +46,9 @@ riscv:
 
 mips:
 	$(MAKE) -C verify mips
+
+aarch32:
+	$(MAKE) -C verify aarch32
 
 # Coq check. One file: rt_memset_neon for every n below 2^64.
 # `coqc` is the compatibility name. Rocq 9.2's compiler is `rocq compile`.

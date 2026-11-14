@@ -1,5 +1,5 @@
 # BSD make (macOS) and GNU make.
-.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 riscv mips clean
+.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 riscv mips aarch32 clean
 
 all: test
 
@@ -26,6 +26,9 @@ riscv:
 
 mips:
 	sh ../scripts/mips64.sh
+
+aarch32:
+	sh ../scripts/aarch32.sh
 
 clean:
 	rm -rf ../build

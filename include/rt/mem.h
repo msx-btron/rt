@@ -27,6 +27,18 @@
                 memcpy, memset, memcmp. memmove stays scalar.
      rcp        Nintendo 64 VR4300. ld/sd, not RSP microcode.
                 memcpy, memset, memcmp. memmove stays scalar.
+     arm1176    ARMv6 ARM state. Pi 1, Pi Zero, CM1. No NEON.
+     a32        AArch32 Advanced SIMD. Pi 2, Pi 3, Zero 2, Pi 4,
+                STM32MP15. Not Pi 5. Not the AArch64 rt_*_neon symbols.
+     m0         ARMv6-M Thumb-1. Cortex-M0, M0+, M1, M23.
+                STM32C0, F0, G0, L0, U0, WB0.
+     m3         ARMv7-M Thumb-2. STM32F1, F2, L1.
+     m4         ARMv7E-M integer. STM32F3, F4, G4, L4, L4+, WB, WL,
+                and the M4 core of H7. DSP is not an ordered memcmp.
+     m7         ARMv7E-M with PLD and a 32-byte copy. STM32F7, H7 M7.
+     m33        ARMv8-M Mainline integer. STM32H5, L5, U5, U3, WBA, C5.
+     m55        ARMv8.1-M Helium. STM32N6.
+                memmove stays scalar on every AArch32 kernel.
 */
 
 void *rt_memcpy_scalar(void *dst, const void *src, size_t n);
@@ -92,5 +104,37 @@ int   rt_memcmp_ee(const void *a, const void *b, size_t n);
 void *rt_memcpy_rcp(void *dst, const void *src, size_t n);
 void *rt_memset_rcp(void *dst, int c, size_t n);
 int   rt_memcmp_rcp(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_arm1176(void *dst, const void *src, size_t n);
+void *rt_memset_arm1176(void *dst, int c, size_t n);
+int   rt_memcmp_arm1176(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_a32(void *dst, const void *src, size_t n);
+void *rt_memset_a32(void *dst, int c, size_t n);
+int   rt_memcmp_a32(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_m0(void *dst, const void *src, size_t n);
+void *rt_memset_m0(void *dst, int c, size_t n);
+int   rt_memcmp_m0(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_m3(void *dst, const void *src, size_t n);
+void *rt_memset_m3(void *dst, int c, size_t n);
+int   rt_memcmp_m3(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_m4(void *dst, const void *src, size_t n);
+void *rt_memset_m4(void *dst, int c, size_t n);
+int   rt_memcmp_m4(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_m7(void *dst, const void *src, size_t n);
+void *rt_memset_m7(void *dst, int c, size_t n);
+int   rt_memcmp_m7(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_m33(void *dst, const void *src, size_t n);
+void *rt_memset_m33(void *dst, int c, size_t n);
+int   rt_memcmp_m33(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_m55(void *dst, const void *src, size_t n);
+void *rt_memset_m55(void *dst, int c, size_t n);
+int   rt_memcmp_m55(const void *a, const void *b, size_t n);
 
 #endif
