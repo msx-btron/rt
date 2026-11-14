@@ -1,8 +1,9 @@
 #!/bin/sh
-# RVV32 contract under QEMU virt, no guest libc.
-# riscv64 ASCII tables against Alpine 3.24.4 musl: C99 scalar, then RVV.
-# Alpine has no riscv32 userland. Guest nanoseconds are the guest clock,
-# not a silicon result.
+# RVV32 and RVV64 freestanding contracts, then two musl guests.
+# rv32: Bootlin 2026.08 ilp32d. rv64: Alpine 3.24.4.
+# Each guest runs scalar C99 with vectorizers off, scalar C99 with
+# vectorizers on, and the RVV assembly. Guest nanoseconds are the
+# guest clock, not a silicon result.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -102,7 +103,7 @@ run_width() {
         echo "rvv${xlen}: exit $rc" >&2
         return 1
     fi
-    if ! grep -q 'rvv ok' "$log"; then
+    if ! grep -a -q 'rvv ok' "$log"; then
         echo "rvv${xlen}: missing rvv ok" >&2
         return 1
     fi
@@ -113,12 +114,9 @@ ALPINE="3.24.4"
 MUSL="1.2.6-r3"
 KPKG="6.18.63-r0"
 BASE="https://dl-cdn.alpinelinux.org/alpine/v3.24"
+BOOTLIN="https://toolchains.bootlin.com/downloads/releases/toolchains/riscv32-ilp32d/test-system"
 cache="$(pwd)/verify/.cache"
 sys="$cache/sysroot-riscv64"
-obj="$cache/obj-riscv64"
-root="$cache/root-riscv64"
-kern="$cache/Image-${KPKG}-riscv64"
-initrd="$cache/rt-initrd-rvv64.gz"
 
 need_tool() {
     if ! command -v "$1" >/dev/null 2>&1; then
@@ -178,7 +176,66 @@ while True:
 PY
 }
 
-run_rv64_table() {
+need_sym() {
+    bin=$1
+    sym=$2
+    if ! strings "$bin" | grep -qx "$sym"; then
+        echo "riscv: $(basename "$bin") is missing $sym" >&2
+        exit 1
+    fi
+}
+
+reject_sym() {
+    bin=$1
+    sym=$2
+    if strings "$bin" | grep -qx "$sym"; then
+        echo "riscv: $(basename "$bin") contains $sym" >&2
+        exit 1
+    fi
+}
+
+need_exit() {
+    key=$1
+    log=$2
+    got=$(grep -a "^${key}:" "$log" | tail -n 1 | tr -d '\r' | sed "s/^${key}://") || true
+    if [ "$got" != "0" ]; then
+        echo "riscv: ${key}:${got:-missing}" >&2
+        exit 1
+    fi
+}
+
+count_at_least() {
+    pat=$1
+    log=$2
+    min=$3
+    n=$(grep -a -F -c "$pat" "$log" || true)
+    if [ "${n:-0}" -lt "$min" ]; then
+        echo "riscv: expected >= $min of [$pat], saw ${n:-0}" >&2
+        exit 1
+    fi
+}
+
+link_one() {
+    out=$1
+    shift
+    set -- "$LD" -m "$g_ld" -dynamic-linker "$g_dyn" \
+        "$g_crt1" "$g_crti" "$@"
+    if [ -n "$g_extra" ]; then
+        set -- "$@" "$g_extra"
+    fi
+    if [ -n "$g_libdir" ]; then
+        set -- "$@" -L "$g_libdir" -lc
+    else
+        set -- "$@" "$g_libcso"
+    fi
+    if [ -n "$g_rtlib" ] && [ -f "$g_rtlib" ]; then
+        set -- "$@" "$g_rtlib"
+    fi
+    set -- "$@" "$g_crtn" -o "$out"
+    "$@"
+}
+
+prepare_rv64() {
     need_tool curl
     need_tool python3
     need_tool tar
@@ -196,6 +253,7 @@ run_rv64_table() {
         echo "riscv: unpack riscv64 musl sysroot"
         extract_apk "$cache/musl-dev-${MUSL}-riscv64.apk" "$sys"
     fi
+    kern="$cache/Image-${KPKG}-riscv64"
     if [ ! -f "$kern" ]; then
         kdir=$(mktemp -d "${TMPDIR:-/tmp}/rt-kern.XXXXXX")
         echo "riscv: unpack linux-lts"
@@ -204,6 +262,7 @@ run_rv64_table() {
         mv "$kern.partial" "$kern"
         rm -rf "$kdir"
     fi
+    root="$cache/root-riscv64"
     if [ ! -f "$root/lib/ld-musl-riscv64.so.1" ]; then
         echo "riscv: unpack Alpine minirootfs"
         rm -rf "$root"
@@ -214,79 +273,202 @@ run_rv64_table() {
         echo "riscv: minirootfs is missing busybox or musl" >&2
         exit 1
     fi
-    mkdir -p "$root/rt" "$obj"
+    g_xlen=64
+    g_abi=lp64d
+    g_ld=elf64lriscv
+    g_dyn=/lib/ld-musl-riscv64.so.1
+    g_sysinc=$sys/usr/include
+    g_crt1=$sys/usr/lib/crt1.o
+    g_crti=$sys/usr/lib/crti.o
+    g_crtn=$sys/usr/lib/crtn.o
+    g_libcso=$root/lib/ld-musl-riscv64.so.1
+    g_libdir=""
+    g_root=$root
+    g_kern=$kern
+    g_cpu="rv64,v=true,vlen=128,elen=64"
+    g_libc="Alpine musl"
+    g_obj=$cache/obj-riscv64
+    g_initrd=$cache/rt-initrd-rvv64.gz
+    g_log=$cache/rvv64-table.log
+}
+
+ensure_rv32_musl() {
+    inc="$cache/musl-rv32/include/string.h"
+    crt1="$cache/musl-rv32/lib/crt1.o"
+    crti="$cache/musl-rv32/lib/crti.o"
+    crtn="$cache/musl-rv32/lib/crtn.o"
+    if [ -f "$inc" ] && [ -f "$crt1" ] && [ -f "$crti" ] && [ -f "$crtn" ]; then
+        return 0
+    fi
+    echo "riscv: build riscv32 musl headers and crt"
+    fetch "https://musl.libc.org/releases/musl-1.2.6.tar.gz" \
+        "$cache/musl-1.2.6.tar.gz"
+    rm -rf "$cache/musl-src"
+    mkdir -p "$cache/musl-src"
+    tar -xzf "$cache/musl-1.2.6.tar.gz" -C "$cache/musl-src" --strip-components 1
+    jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+    (
+        cd "$cache/musl-src"
+        CC="$CC -target riscv32-linux-musl -march=rv32gc -mabi=ilp32d" \
+            AR=ar RANLIB=ranlib \
+            ./configure --prefix="$cache/musl-rv32" \
+            --target=riscv32-linux-musl --disable-shared
+        make -j"$jobs" AR=ar RANLIB=ranlib
+        make install AR=ar RANLIB=ranlib
+    )
+    if [ ! -f "$inc" ] || [ ! -f "$crt1" ] || [ ! -f "$crti" ] || [ ! -f "$crtn" ]; then
+        echo "riscv: riscv32 musl headers or crt missing after install" >&2
+        exit 1
+    fi
+}
+
+prepare_rv32() {
+    need_tool curl
+    need_tool python3
+    need_tool tar
+    need_tool gzip
+    need_tool cpio
+    need_tool strings
+    mkdir -p "$cache"
+    fetch "$BOOTLIN/riscv32-ilp32d--musl--stable-2026.08-1-Image" \
+        "$cache/Image-bootlin-rv32-musl"
+    fetch "$BOOTLIN/riscv32-ilp32d--musl--stable-2026.08-1-rootfs.tar" \
+        "$cache/rootfs-bootlin-rv32-musl.tar"
+    ensure_rv32_musl
+    root="$cache/root-riscv32"
+    if [ ! -x "$root/bin/busybox" ] || [ ! -f "$root/lib/libc.so" ]; then
+        echo "riscv: unpack Bootlin riscv32 rootfs"
+        rm -rf "$root"
+        mkdir -p "$root"
+        tar -xf "$cache/rootfs-bootlin-rv32-musl.tar" -C "$root"
+    fi
+    if [ ! -x "$root/bin/busybox" ] || [ ! -f "$root/lib/libc.so" ]; then
+        echo "riscv: Bootlin rootfs is missing busybox or musl" >&2
+        exit 1
+    fi
+    g_xlen=32
+    g_abi=ilp32d
+    g_ld=elf32lriscv
+    g_dyn=/lib/ld-musl-riscv32.so.1
+    g_sysinc=$cache/musl-rv32/include
+    g_crt1=$cache/musl-rv32/lib/crt1.o
+    g_crti=$cache/musl-rv32/lib/crti.o
+    g_crtn=$cache/musl-rv32/lib/crtn.o
+    g_libcso=$root/lib/libc.so
+    g_libdir=$root/lib
+    g_root=$root
+    g_kern=$cache/Image-bootlin-rv32-musl
+    g_cpu="rv32,v=true,vlen=128,elen=64,f=true,d=true"
+    g_libc="Bootlin musl"
+    g_obj=$cache/obj-riscv32
+    g_initrd=$cache/rt-initrd-rvv32.gz
+    g_log=$cache/rvv32-table.log
+}
+
+build_and_boot() {
     res=$("$CC" -print-resource-dir)
-    cflags="-std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function \
+    target=riscv${g_xlen}-linux-musl
+    g_rtlib=$("$CC" -target "$target" -mabi="$g_abi" --rtlib=compiler-rt -print-libgcc-file-name)
+    case "$g_rtlib" in
+        /*) ;;
+        *) g_rtlib="" ;;
+    esac
+    common="-std=c99 -O2 -Wall -Wextra -Werror -Wno-unused-function \
 -fno-strict-aliasing -fno-builtin -fno-stack-protector -fno-pie \
--nostdinc -isystem $res/include"
-    scflags="$cflags -fno-vectorize -fno-slp-vectorize"
-    echo "riscv: compile scalar riscv64 table"
+-nostdinc -isystem $res/include -isystem $g_sysinc -Iinclude"
+    off="$common -fno-vectorize -fno-slp-vectorize"
+    g_extra=""
+    mkdir -p "$g_obj" "$g_root/rt"
+    if [ "$g_xlen" = 32 ]; then
+        # ilp32d has no compiler-rt in this clang. Unsigned long long
+        # to double is the one helper test_host.c emits.
+        cat > "$g_obj/floatundidf.c" <<'EOF'
+double __floatundidf(unsigned long long a)
+{
+    double hi = (double)(unsigned)(a >> 32);
+    double lo = (double)(unsigned)a;
+    return hi * 4294967296.0 + lo;
+}
+EOF
+        "$CC" -target riscv32-linux-musl -march=rv32gc -mabi=ilp32d -O2 \
+            -c -o "$g_obj/floatundidf.o" "$g_obj/floatundidf.c"
+        g_extra=$g_obj/floatundidf.o
+    fi
+
+    echo "riscv: compile scalar riscv${g_xlen} (vectorize off)"
     # /bin/sh splits these flag lists.
     # shellcheck disable=SC2086
-    "$CC" -target riscv64-linux-musl -march=rv64gc -mabi=lp64d $scflags \
-        -isystem "$sys/usr/include" -Iinclude -DRT_TABLE_SCALAR \
-        -c -o "$obj/test_host_scalar.o" verify/suite/test_host.c
-    "$CC" -target riscv64-linux-musl -march=rv64gc -mabi=lp64d $scflags \
-        -isystem "$sys/usr/include" -Iinclude \
-        -S -o "$obj/mem_scalar.s" src/common/scalar/mem.c
-    "$CC" -target riscv64-linux-musl -march=rv64gc -mabi=lp64d $scflags \
-        -isystem "$sys/usr/include" -Iinclude \
-        -S -o "$obj/string_scalar.s" src/common/scalar/string.c
+    "$CC" -target "$target" -march=rv${g_xlen}gc -mabi="$g_abi" $off \
+        -DRT_TABLE_SCALAR \
+        -c -o "$g_obj/test_off.o" verify/suite/test_host.c
+    "$CC" -target "$target" -march=rv${g_xlen}gc -mabi="$g_abi" $off \
+        -S -o "$g_obj/mem_off.s" src/common/scalar/mem.c
+    "$CC" -target "$target" -march=rv${g_xlen}gc -mabi="$g_abi" $off \
+        -S -o "$g_obj/string_off.s" src/common/scalar/string.c
     if grep -E 'vset|vle[0-9]|vse[0-9]|vlux|vsox' \
-        "$obj/mem_scalar.s" "$obj/string_scalar.s"; then
-        echo "riscv: scalar objects contain vector opcodes" >&2
+        "$g_obj/mem_off.s" "$g_obj/string_off.s"; then
+        echo "riscv: scalar-off objects contain vector opcodes" >&2
         exit 1
     fi
-    "$CC" -target riscv64-linux-musl -march=rv64gc -mabi=lp64d \
-        -c -o "$obj/mem_scalar.o" "$obj/mem_scalar.s"
-    "$CC" -target riscv64-linux-musl -march=rv64gc -mabi=lp64d \
-        -c -o "$obj/string_scalar.o" "$obj/string_scalar.s"
-    "$LD" -m elf64lriscv \
-        -dynamic-linker /lib/ld-musl-riscv64.so.1 \
-        "$sys/usr/lib/crt1.o" \
-        "$sys/usr/lib/crti.o" \
-        "$obj/test_host_scalar.o" "$obj/mem_scalar.o" "$obj/string_scalar.o" \
-        "$root/lib/ld-musl-riscv64.so.1" \
-        "$sys/usr/lib/crtn.o" \
-        -o "$obj/test_host_scalar"
+    "$CC" -target "$target" -march=rv${g_xlen}gc -mabi="$g_abi" \
+        -c -o "$g_obj/mem_off.o" "$g_obj/mem_off.s"
+    "$CC" -target "$target" -march=rv${g_xlen}gc -mabi="$g_abi" \
+        -c -o "$g_obj/string_off.o" "$g_obj/string_off.s"
+    link_one "$g_obj/test_host_scalar" \
+        "$g_obj/test_off.o" "$g_obj/mem_off.o" "$g_obj/string_off.o"
+
+    echo "riscv: compile scalar riscv${g_xlen} (vectorize on)"
+    # shellcheck disable=SC2086
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" $common \
+        -DRT_TABLE_SCALAR -DRT_VECTORIZE \
+        -c -o "$g_obj/test_on.o" verify/suite/test_host.c
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" $common \
+        -DRT_VECTORIZE \
+        -S -o "$g_obj/mem_on.s" src/common/scalar/mem.c
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" $common \
+        -DRT_VECTORIZE \
+        -S -o "$g_obj/string_on.s" src/common/scalar/string.c
+    if ! grep -E 'vset|vle[0-9]|vse[0-9]' "$g_obj/mem_on.s" >/dev/null; then
+        echo "riscv: scalar-on memory was not vectorized" >&2
+        exit 1
+    fi
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" \
+        -c -o "$g_obj/mem_on.o" "$g_obj/mem_on.s"
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" \
+        -c -o "$g_obj/string_on.o" "$g_obj/string_on.s"
+    link_one "$g_obj/test_host_scalar_on" \
+        "$g_obj/test_on.o" "$g_obj/mem_on.o" "$g_obj/string_on.o"
+
+    echo "riscv: compile RVV${g_xlen}"
+    # shellcheck disable=SC2086
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" $common \
+        -DRT_TABLE_RVV \
+        -c -o "$g_obj/test_rvv.o" verify/suite/test_host.c
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" \
+        -c -o "$g_obj/mem_rvv.o" src/riscv${g_xlen}/rvv/mem.s
+    "$CC" -target "$target" -march=rv${g_xlen}gcv -mabi="$g_abi" \
+        -c -o "$g_obj/string_rvv.o" src/riscv${g_xlen}/rvv/string.s
+    link_one "$g_obj/test_host_rvv" \
+        "$g_obj/test_rvv.o" "$g_obj/mem_rvv.o" "$g_obj/string_rvv.o"
+
     for sym in rt_memcpy_scalar rt_memmove_scalar rt_memset_scalar \
         rt_memcmp_scalar rt_strlen rt_strpad; do
-        if ! strings "$obj/test_host_scalar" | grep -qx "$sym"; then
-            echo "riscv: test_host_scalar is missing $sym" >&2
-            exit 1
-        fi
+        need_sym "$g_obj/test_host_scalar" "$sym"
+        need_sym "$g_obj/test_host_scalar_on" "$sym"
     done
-    if strings "$obj/test_host_scalar" | grep -qx 'rt_memcpy_rvv'; then
-        echo "riscv: scalar binary contains an RVV symbol" >&2
-        exit 1
-    fi
-    echo "riscv: compile RVV64 table"
-    # shellcheck disable=SC2086
-    "$CC" -target riscv64-linux-musl -march=rv64gcv -mabi=lp64d $cflags \
-        -isystem "$sys/usr/include" -Iinclude -DRT_TABLE_RVV \
-        -c -o "$obj/test_host.o" verify/suite/test_host.c
-    "$CC" -target riscv64-linux-musl -march=rv64gcv -mabi=lp64d \
-        -c -o "$obj/mem.o" src/riscv64/rvv/mem.s
-    "$CC" -target riscv64-linux-musl -march=rv64gcv -mabi=lp64d \
-        -c -o "$obj/string.o" src/riscv64/rvv/string.s
-    "$LD" -m elf64lriscv \
-        -dynamic-linker /lib/ld-musl-riscv64.so.1 \
-        "$sys/usr/lib/crt1.o" \
-        "$sys/usr/lib/crti.o" \
-        "$obj/test_host.o" "$obj/mem.o" "$obj/string.o" \
-        "$root/lib/ld-musl-riscv64.so.1" \
-        "$sys/usr/lib/crtn.o" \
-        -o "$obj/test_host_rvv"
-    for sym in rt_memcpy_rvv rt_memset_rvv rt_memcmp_rvv rt_strlen_rvv rt_strpad_rvv; do
-        if ! strings "$obj/test_host_rvv" | grep -qx "$sym"; then
-            echo "riscv: test_host_rvv is missing $sym" >&2
-            exit 1
-        fi
+    reject_sym "$g_obj/test_host_scalar" rt_memcpy_rvv
+    reject_sym "$g_obj/test_host_scalar_on" rt_memcpy_rvv
+    for sym in rt_memcpy_rvv rt_memset_rvv rt_memcmp_rvv \
+        rt_strlen_rvv rt_strpad_rvv; do
+        need_sym "$g_obj/test_host_rvv" "$sym"
     done
-    cp -f "$obj/test_host_scalar" "$root/rt/test_host_scalar"
-    cp -f "$obj/test_host_rvv" "$root/rt/test_host_rvv"
-    chmod 755 "$root/rt/test_host_scalar" "$root/rt/test_host_rvv"
-    cat > "$root/init" <<'EOF'
+
+    cp -f "$g_obj/test_host_scalar" "$g_root/rt/test_host_scalar"
+    cp -f "$g_obj/test_host_scalar_on" "$g_root/rt/test_host_scalar_on"
+    cp -f "$g_obj/test_host_rvv" "$g_root/rt/test_host_rvv"
+    chmod 755 "$g_root/rt/test_host_scalar" \
+        "$g_root/rt/test_host_scalar_on" "$g_root/rt/test_host_rvv"
+    cat > "$g_root/init" <<EOF
 #!/bin/sh
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export NO_COLOR=1
@@ -294,12 +476,15 @@ export TERM=dumb
 mkdir -p /proc /sys
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-echo "======== scalar riscv64 Alpine musl ========"
+echo "======== scalar riscv${g_xlen} ${g_libc} (vectorize off) ========"
 /rt/test_host_scalar
-echo "scalar64_exit:$?"
-echo "======== RVV64 Alpine musl ========"
+echo "scalar${g_xlen}_off_exit:\$?"
+echo "======== scalar riscv${g_xlen} ${g_libc} (vectorize on) ========"
+/rt/test_host_scalar_on
+echo "scalar${g_xlen}_on_exit:\$?"
+echo "======== RVV${g_xlen} ${g_libc} ========"
 /rt/test_host_rvv
-echo "rvv64_exit:$?"
+echo "rvv${g_xlen}_exit:\$?"
 sleep 1
 if [ -x /sbin/poweroff ]; then
     /sbin/poweroff -f
@@ -312,44 +497,43 @@ echo "init: poweroff returned"
 sleep 2
 exit 1
 EOF
-    chmod 755 "$root/init"
-    echo "riscv: pack riscv64 initrd"
-    rm -f "$initrd.partial"
+    chmod 755 "$g_root/init"
+    echo "riscv: pack riscv${g_xlen} initrd"
+    rm -f "$g_initrd.partial"
     (
-        cd "$root"
-        find . -print | cpio -o -H newc | gzip -9 > "$initrd.partial"
+        cd "$g_root"
+        find . -print | cpio -o -H newc | gzip -9 > "$g_initrd.partial"
     )
-    mv "$initrd.partial" "$initrd"
-    echo "riscv: libc is Alpine ${ALPINE} musl ${MUSL}, riscv64"
-    echo "riscv: scalar and RVV guest nanoseconds are the guest clock, not a silicon result"
+    mv "$g_initrd.partial" "$g_initrd"
+    echo "riscv: libc is ${g_libc}, riscv${g_xlen}"
+    echo "riscv: guest nanoseconds are the guest clock, not a silicon result"
     echo "riscv: strscpy, strscat, and strpad have no musl symbol"
-    log="$cache/rvv64-table.log"
-    fifo="$cache/rvv64-table.fifo"
-    rm -f "$fifo" "$log"
+    fifo="$g_log.fifo"
+    rm -f "$fifo" "$g_log"
     mkfifo "$fifo"
-    tee "$log" < "$fifo" &
+    tee "$g_log" < "$fifo" &
     tpid=$!
-    qemu-system-riscv64 \
+    qemu-system-riscv${g_xlen} \
         -machine virt \
-        -cpu rv64,v=true,vlen=128,elen=64 \
+        -cpu "$g_cpu" \
         -accel tcg -m 512 -smp 1 \
         -nic none \
-        -kernel "$kern" \
-        -initrd "$initrd" \
+        -kernel "$g_kern" \
+        -initrd "$g_initrd" \
         -append "console=ttyS0 loglevel=3 quiet panic=1 rdinit=/init" \
         -nographic -no-reboot \
         >"$fifo" 2>&1 &
     qpid=$!
     (
         slept=0
-        while [ "$slept" -lt 600 ]; do
+        while [ "$slept" -lt 1500 ]; do
             if ! kill -0 "$qpid" 2>/dev/null; then
                 exit 0
             fi
             sleep 1
             slept=$((slept + 1))
         done
-        echo "riscv: RVV64 table qemu exceeded 600s" >&2
+        echo "riscv: riscv${g_xlen} table qemu exceeded 1500s" >&2
         kill "$qpid" 2>/dev/null || true
     ) &
     wpid=$!
@@ -361,35 +545,20 @@ EOF
     wait "$wpid" 2>/dev/null || true
     wait "$tpid" 2>/dev/null || true
     rm -f "$fifo"
-    echo "riscv: riscv64 qemu process exit ${qec}"
-    got=$(grep '^scalar64_exit:' "$log" | tail -n 1 | tr -d '\r' | sed 's/^scalar64_exit://') || true
-    if [ "$got" != "0" ]; then
-        echo "riscv: scalar64_exit:${got:-missing}" >&2
-        exit 1
-    fi
-    got=$(grep '^rvv64_exit:' "$log" | tail -n 1 | tr -d '\r' | sed 's/^rvv64_exit://') || true
-    if [ "$got" != "0" ]; then
-        echo "riscv: rvv64_exit:${got:-missing}" >&2
-        exit 1
-    fi
-    if ! grep -q '== backend: scalar ==' "$log"; then
-        echo "riscv: missing backend table: scalar" >&2
-        exit 1
-    fi
-    if ! grep -q '== backend: rvv ==' "$log"; then
-        echo "riscv: missing backend table: rvv" >&2
-        exit 1
-    fi
-    if ! grep -q '| memmove ' "$log"; then
-        echo "riscv: scalar table is missing memmove" >&2
-        exit 1
-    fi
-    n=$(grep -c '| strscpy          |      N/A |' "$log" || true)
-    if [ "$n" -lt 2 ]; then
-        echo "riscv: strscpy libc cell is not N/A in both tables" >&2
-        exit 1
-    fi
-    echo "riscv: scalar and RVV64 tables ok"
+    echo "riscv: riscv${g_xlen} qemu process exit ${qec}"
+    need_exit "scalar${g_xlen}_off_exit" "$g_log"
+    need_exit "scalar${g_xlen}_on_exit" "$g_log"
+    need_exit "rvv${g_xlen}_exit" "$g_log"
+    count_at_least "vectorize: off" "$g_log" 1
+    count_at_least "vectorize: on" "$g_log" 1
+    count_at_least "== backend: scalar ==" "$g_log" 2
+    count_at_least "== backend: rvv ==" "$g_log" 1
+    count_at_least "| memmove " "$g_log" 2
+    count_at_least "| strscpy          |      N/A |" "$g_log" 3
+    count_at_least "scalar riscv${g_xlen} ${g_libc} (vectorize off)" "$g_log" 1
+    count_at_least "scalar riscv${g_xlen} ${g_libc} (vectorize on)" "$g_log" 1
+    count_at_least "RVV${g_xlen} ${g_libc}" "$g_log" 1
+    echo "riscv: riscv${g_xlen} scalar off, scalar on, and RVV ok"
 }
 
 echo "riscv: $CC"
@@ -397,6 +566,9 @@ compile_width 64 lp64
 compile_width 32 ilp32
 run_width 64
 run_width 32
-echo "riscv: RVV32 contract ok (Alpine publishes no riscv32 libc)"
-run_rv64_table
-echo "riscv: RVV32 contract, scalar riscv64 table, and RVV64 table ok"
+echo "riscv: RVV32 and RVV64 contracts ok"
+prepare_rv64
+build_and_boot
+prepare_rv32
+build_and_boot
+echo "riscv: rv32 Bootlin musl and rv64 Alpine musl: scalar off, scalar on, and RVV ok"

@@ -250,8 +250,8 @@ static void print_one_backend(const char *backend)
         for (i = 0; i < g_nrows; i++) {
             struct row *r = &g_rows[i];
             const char *st_col, *coef_col, *name_col;
-            char libc_s[16];
-            char coef_s[16];
+            char libc_s[32];
+            char coef_s[32];
             if (!row_in_backend_table(r, backend) || r->group != g)
                 continue;
             name_col = g_color ? grp_color[g] : "";
@@ -1497,10 +1497,12 @@ static void bench_copy_rvv(struct row *r)
             src[n - 1] = (char)0xFF;
         memset(da, 0xA5, sizeof da);
         memset(db, 0xA5, sizeof db);
+        /* flawfinder: ignore */
         row_add(r, strcpy(da, src) == da && RT_STRCPY(db, src) == db &&
                 memcmp(da, db, n + 2) == 0);
     }
     fill_pat(src, 128, -1);
+    /* flawfinder: ignore */
     RT_TIME(strcpy(da, src), RT_STRCPY(db, src));
 }
 
@@ -1520,6 +1522,7 @@ static void bench_cat_rvv(struct row *r, int bounded)
         memcpy(da, "pre", 4);
         memcpy(db, "pre", 4);
         if (!bounded) {
+            /* flawfinder: ignore */
             row_add(r, strcat(da, src) == da && RT_STRCAT(db, src) == db &&
                     memcmp(da, db, 4 + n + 2) == 0);
         } else {
@@ -1537,6 +1540,7 @@ static void bench_cat_rvv(struct row *r, int bounded)
     }
     fill_pat(src, 32, -1);
     if (!bounded)
+        /* flawfinder: ignore */
         RT_TIME((memcpy(da, "head", 5), strcat(da, src)),
                 (memcpy(db, "head", 5), RT_STRCAT(db, src)));
     else

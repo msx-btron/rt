@@ -15,6 +15,23 @@
     lw \reg, \off(\base)
 .endm
 
+# vec from ptr. nvl is the vl just set. sa and sb are scratch.
+# vle8 when the group ends on this page (bleu, so the last byte of the
+# page is included). vle8ff when the group would cross, so a fault stops
+# the load. Labels 70/71 are local and may repeat.
+.macro vload vec, ptr, nvl, sa, sb
+    li \sa, 4095
+    and \sa, \ptr, \sa
+    add \sa, \sa, \nvl
+    li \sb, 4096
+    bleu \sa, \sb, 70f
+    vle8ff.v \vec, (\ptr)
+    j 71f
+70:
+    vle8.v \vec, (\ptr)
+71:
+.endm
+
 .globl rt_strlen_rvv
 .type rt_strlen_rvv, @function
 .p2align 2
@@ -22,7 +39,7 @@ rt_strlen_rvv:
     mv t0, a0
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t4, t5
     csrr t1, vl
     vmseq.vi v0, v8, 0
     vfirst.m t2, v0
@@ -66,7 +83,7 @@ rt_strcpy_rvv:
     mv t0, a0
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a1)
+    vload v8, a1, t6, t4, t5
     csrr t1, vl
     vmseq.vi v0, v8, 0
     vfirst.m t2, v0
@@ -90,7 +107,7 @@ rt_strncpy_rvv:
     beqz a2, 9f
 1:
     vsetvli t1, a2, e8, m8, ta, ma
-    vle8ff.v v8, (a1)
+    vload v8, a1, t1, t4, t5
     csrr t1, vl
     vmseq.vi v0, v8, 0
     vfirst.m t2, v0
@@ -128,7 +145,7 @@ rt_strcat_rvv:
     mv t1, a1
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t4, t5
     csrr t2, vl
     vmseq.vi v0, v8, 0
     vfirst.m t3, v0
@@ -140,7 +157,7 @@ rt_strcat_rvv:
     mv a1, t1
 3:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a1)
+    vload v8, a1, t6, t4, t5
     csrr t2, vl
     vmseq.vi v0, v8, 0
     vfirst.m t3, v0
@@ -164,7 +181,7 @@ rt_strncat_rvv:
     mv t1, a1
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t4, t5
     csrr t2, vl
     vmseq.vi v0, v8, 0
     vfirst.m t3, v0
@@ -176,7 +193,7 @@ rt_strncat_rvv:
     beqz a2, 6f
 3:
     vsetvli t2, a2, e8, m8, ta, ma
-    vle8ff.v v8, (a1)
+    vload v8, a1, t2, t4, t5
     csrr t2, vl
     vmseq.vi v0, v8, 0
     vfirst.m t3, v0
@@ -203,10 +220,10 @@ rt_strncat_rvv:
 rt_strcmp_rvv:
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t2, t5
     csrr t1, vl
-    vsetvli x0, t1, e8, m8, tu, mu
-    vle8ff.v v16, (a1)
+    vsetvli t2, t1, e8, m8, tu, mu
+    vload v16, a1, t2, t5, t6
     csrr t1, vl
     vmsne.vv v0, v8, v16
     vfirst.m t3, v0
@@ -239,10 +256,10 @@ rt_strncmp_rvv:
     beqz a2, 4f
 1:
     vsetvli t0, a2, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t0, t2, t5
     csrr t1, vl
-    vsetvli x0, t1, e8, m8, tu, mu
-    vle8ff.v v16, (a1)
+    vsetvli t2, t1, e8, m8, tu, mu
+    vload v16, a1, t2, t5, t6
     csrr t1, vl
     vmsne.vv v0, v8, v16
     vfirst.m t3, v0
@@ -276,7 +293,7 @@ rt_strchr_rvv:
     andi a1, a1, 255
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t4, t5
     csrr t1, vl
     vmseq.vx v0, v8, a1
     vfirst.m t2, v0
@@ -312,7 +329,7 @@ rt_strrchr_rvv:
     li t0, 0
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t5, t4
     csrr t1, vl
     mv t2, a0
     add t3, a0, t1
@@ -342,7 +359,7 @@ rt_strstr_rvv:
     mv a0, a1
 2:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t2, t3
     csrr t1, vl
     vmseq.vi v0, v8, 0
     vfirst.m t2, v0
@@ -356,7 +373,7 @@ rt_strstr_rvv:
     lbu t0, (a1)
 4:
     vsetvli t5, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t5, t2, t3
     csrr t1, vl
     vmseq.vx v0, v8, t0
     vfirst.m t2, v0
@@ -380,8 +397,8 @@ rt_strstr_rvv:
     mv t3, a1
     mv t4, t6
 10:
-    vsetvli x0, t4, e8, m8, ta, ma
-    vle8ff.v v8, (t2)
+    vsetvli t1, t4, e8, m8, ta, ma
+    vload v8, t2, t1, a2, t5
     csrr t1, vl
     vsetvli x0, t1, e8, m8, tu, mu
     vle8.v v16, (t3)
@@ -413,7 +430,7 @@ rt_strpbrk_rvv:
     beqz t0, 9f
 1:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t4, t5
     csrr t1, vl
     vmseq.vi v0, v8, 0
     vfirst.m t2, v0
@@ -461,7 +478,7 @@ rt_strscpy_rvv:
     sub t5, t3, t4
     add a0, t1, t4
     vsetvli t6, t5, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t2, t5
     csrr t6, vl
     vmseq.vi v0, v8, 0
     vfirst.m t2, v0
@@ -489,7 +506,7 @@ rt_strscpy_rvv:
     add a0, t1, t4
 6:
     vsetvli t6, x0, e8, m8, ta, ma
-    vle8ff.v v8, (a0)
+    vload v8, a0, t6, t2, t5
     csrr t6, vl
     vmseq.vi v0, v8, 0
     vfirst.m t2, v0
@@ -544,7 +561,7 @@ rt_strpad_rvv:
     mv t1, a2
 1:
     vsetvli t2, t1, e8, m8, ta, ma
-    vle8ff.v v8, (a1)
+    vload v8, a1, t2, t0, t3
     csrr t2, vl
     vmseq.vi v0, v8, 0
     vfirst.m t3, v0

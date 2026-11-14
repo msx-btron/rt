@@ -2,7 +2,136 @@
 #include <stdint.h>
 
 /* Straight loops. On the host, clang -O2 widens an aligned run of these
-   into 64-byte stores. The timed rows are 64-byte aligned. */
+   into wide stores when the vectorizers are on. The timed rows are
+   64-byte aligned.
+   RISC-V with the vectorizers off does not widen a byte loop, so that
+   build copies aligned size_t words. The vectorize-on build keeps these
+   byte loops and may emit RVV. */
+
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+static size_t load_aligned(const void *p)
+{
+    size_t w;
+
+    p = __builtin_assume_aligned(p, sizeof(size_t));
+    __builtin_memcpy(&w, p, sizeof w);
+    return w;
+}
+
+static void store_aligned(void *p, size_t w)
+{
+    p = __builtin_assume_aligned(p, sizeof w);
+    __builtin_memcpy(p, &w, sizeof w);
+}
+
+static void copy_words(unsigned char *d, const unsigned char *s, size_t n)
+{
+    size_t step = 8 * sizeof(size_t);
+
+    while (n >= step) {
+        size_t w0 = load_aligned(s);
+        size_t w1 = load_aligned(s + sizeof(size_t));
+        size_t w2 = load_aligned(s + 2 * sizeof(size_t));
+        size_t w3 = load_aligned(s + 3 * sizeof(size_t));
+        size_t w4 = load_aligned(s + 4 * sizeof(size_t));
+        size_t w5 = load_aligned(s + 5 * sizeof(size_t));
+        size_t w6 = load_aligned(s + 6 * sizeof(size_t));
+        size_t w7 = load_aligned(s + 7 * sizeof(size_t));
+        store_aligned(d, w0);
+        store_aligned(d + sizeof(size_t), w1);
+        store_aligned(d + 2 * sizeof(size_t), w2);
+        store_aligned(d + 3 * sizeof(size_t), w3);
+        store_aligned(d + 4 * sizeof(size_t), w4);
+        store_aligned(d + 5 * sizeof(size_t), w5);
+        store_aligned(d + 6 * sizeof(size_t), w6);
+        store_aligned(d + 7 * sizeof(size_t), w7);
+        s += step;
+        d += step;
+        n -= step;
+    }
+    while (n >= sizeof(size_t)) {
+        store_aligned(d, load_aligned(s));
+        s += sizeof(size_t);
+        d += sizeof(size_t);
+        n -= sizeof(size_t);
+    }
+    while (n--)
+        *d++ = *s++;
+}
+
+/* Load the whole chunk before any store. A backward memmove can overlap
+   the chunk by less than one step, and the timed row overlaps by 16. */
+static void copy_words_back(unsigned char *d, const unsigned char *s, size_t n)
+{
+    size_t step = 8 * sizeof(size_t);
+
+    while (n & (sizeof(size_t) - 1)) {
+        n--;
+        d[n] = s[n];
+    }
+    while (n >= step) {
+        size_t w0, w1, w2, w3, w4, w5, w6, w7;
+
+        n -= step;
+        w0 = load_aligned(s + n);
+        w1 = load_aligned(s + n + sizeof(size_t));
+        w2 = load_aligned(s + n + 2 * sizeof(size_t));
+        w3 = load_aligned(s + n + 3 * sizeof(size_t));
+        w4 = load_aligned(s + n + 4 * sizeof(size_t));
+        w5 = load_aligned(s + n + 5 * sizeof(size_t));
+        w6 = load_aligned(s + n + 6 * sizeof(size_t));
+        w7 = load_aligned(s + n + 7 * sizeof(size_t));
+        store_aligned(d + n, w0);
+        store_aligned(d + n + sizeof(size_t), w1);
+        store_aligned(d + n + 2 * sizeof(size_t), w2);
+        store_aligned(d + n + 3 * sizeof(size_t), w3);
+        store_aligned(d + n + 4 * sizeof(size_t), w4);
+        store_aligned(d + n + 5 * sizeof(size_t), w5);
+        store_aligned(d + n + 6 * sizeof(size_t), w6);
+        store_aligned(d + n + 7 * sizeof(size_t), w7);
+    }
+    while (n >= sizeof(size_t)) {
+        n -= sizeof(size_t);
+        store_aligned(d + n, load_aligned(s + n));
+    }
+}
+
+static void set_words(unsigned char *p, unsigned char uc, size_t n)
+{
+    size_t fill = uc;
+    size_t step = 8 * sizeof(size_t);
+
+    fill |= fill << 8;
+    fill |= fill << 16;
+#if __riscv_xlen == 64
+    fill |= fill << 32;
+#endif
+    while (n >= step) {
+        store_aligned(p, fill);
+        store_aligned(p + sizeof(size_t), fill);
+        store_aligned(p + 2 * sizeof(size_t), fill);
+        store_aligned(p + 3 * sizeof(size_t), fill);
+        store_aligned(p + 4 * sizeof(size_t), fill);
+        store_aligned(p + 5 * sizeof(size_t), fill);
+        store_aligned(p + 6 * sizeof(size_t), fill);
+        store_aligned(p + 7 * sizeof(size_t), fill);
+        p += step;
+        n -= step;
+    }
+    while (n >= sizeof(size_t)) {
+        store_aligned(p, fill);
+        p += sizeof(size_t);
+        n -= sizeof(size_t);
+    }
+    while (n--)
+        *p++ = uc;
+}
+
+static int both_aligned(const void *a, const void *b)
+{
+    return (((uintptr_t)a | (uintptr_t)b) & (sizeof(size_t) - 1)) == 0;
+}
+#endif
 
 void *rt_memcpy_scalar(void *dst, const void *src, size_t n)
 {
@@ -10,6 +139,12 @@ void *rt_memcpy_scalar(void *dst, const void *src, size_t n)
     const unsigned char *s = (const unsigned char *)src;
     size_t i;
 
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+    if (both_aligned(d, s)) {
+        copy_words(d, s, n);
+        return dst;
+    }
+#endif
     for (i = 0; i < n; i++)
         d[i] = s[i];
     return dst;
@@ -23,6 +158,16 @@ void *rt_memmove_scalar(void *dst, const void *src, size_t n)
 
     if (d == s || n == 0)
         return dst;
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+    if (both_aligned(d, s)) {
+        /* Overlap with dst above src must copy from the top. */
+        if (d < s)
+            copy_words(d, s, n);
+        else
+            copy_words_back(d, s, n);
+        return dst;
+    }
+#endif
     /* Overlap with dst above src must copy from the top. */
     if (d < s) {
         for (i = 0; i < n; i++)
@@ -40,6 +185,12 @@ void *rt_memset_scalar(void *dst, int c, size_t n)
     unsigned char uc = (unsigned char)c;
     size_t i;
 
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+    if (((uintptr_t)p & (sizeof(size_t) - 1)) == 0) {
+        set_words(p, uc, n);
+        return dst;
+    }
+#endif
     for (i = 0; i < n; i++)
         p[i] = uc;
     return dst;

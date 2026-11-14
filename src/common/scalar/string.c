@@ -14,6 +14,46 @@ static size_t load_word(const void *p)
     return w;
 }
 
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+/* assume_aligned lets clang emit ld/sd. A plain memcpy of a size_t
+   stays eight lbu on RISC-V, because the ABI forbids a misaligned ld. */
+static size_t load_aligned(const void *p)
+{
+    size_t w;
+
+    p = __builtin_assume_aligned(p, sizeof(size_t));
+    __builtin_memcpy(&w, p, sizeof w);
+    return w;
+}
+
+static void store_aligned(void *p, size_t w)
+{
+    p = __builtin_assume_aligned(p, sizeof w);
+    __builtin_memcpy(p, &w, sizeof w);
+}
+
+#else
+static size_t load_fast(const void *p)
+{
+    return load_word(p);
+}
+
+static void store_fast(void *p, size_t w)
+{
+    __builtin_memcpy(p, &w, sizeof w);
+}
+#endif
+
+/* Sites below have already peeled to size_t alignment on RISC-V.
+   A runtime check in the helper makes clang keep the lbu rebuild. */
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+#define load_known load_aligned
+#define store_known store_aligned
+#else
+#define load_known load_fast
+#define store_known store_fast
+#endif
+
 size_t rt_strlen(const char *s)
 {
     const char *p = s;
@@ -26,19 +66,19 @@ size_t rt_strlen(const char *s)
     /* Each step loads one word and stops on a zero in that word.
        The over-read is the bytes after NUL inside that word. */
     for (;;) {
-        size_t w = load_word(p);
+        size_t w = load_known(p);
         if (haszero(w))
             break;
         p += sizeof(size_t);
-        w = load_word(p);
+        w = load_known(p);
         if (haszero(w))
             break;
         p += sizeof(size_t);
-        w = load_word(p);
+        w = load_known(p);
         if (haszero(w))
             break;
         p += sizeof(size_t);
-        w = load_word(p);
+        w = load_known(p);
         if (haszero(w))
             break;
         p += sizeof(size_t);
@@ -78,28 +118,28 @@ char *rt_strcpy(char *dst, const char *src)
                 return dst;
         }
         for (;;) {
-            size_t w = load_word(src);
+            size_t w = load_known(src);
             if (haszero(w))
                 break;
-            __builtin_memcpy(d, &w, sizeof w);
+            store_known(d, w);
             d += sizeof(size_t);
             src += sizeof(size_t);
-            w = load_word(src);
+            w = load_known(src);
             if (haszero(w))
                 break;
-            __builtin_memcpy(d, &w, sizeof w);
+            store_known(d, w);
             d += sizeof(size_t);
             src += sizeof(size_t);
-            w = load_word(src);
+            w = load_known(src);
             if (haszero(w))
                 break;
-            __builtin_memcpy(d, &w, sizeof w);
+            store_known(d, w);
             d += sizeof(size_t);
             src += sizeof(size_t);
-            w = load_word(src);
+            w = load_known(src);
             if (haszero(w))
                 break;
-            __builtin_memcpy(d, &w, sizeof w);
+            store_known(d, w);
             d += sizeof(size_t);
             src += sizeof(size_t);
         }
@@ -112,6 +152,23 @@ char *rt_strcpy(char *dst, const char *src)
 char *rt_strncpy(char *dst, const char *src, size_t n)
 {
     size_t i = 0;
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+    if ((((uintptr_t)dst ^ (uintptr_t)src) & (sizeof(size_t) - 1)) == 0) {
+        while (i < n && ((uintptr_t)(src + i) & (sizeof(size_t) - 1)) != 0) {
+            if (src[i] == '\0')
+                break;
+            dst[i] = src[i];
+            i++;
+        }
+        while (i + sizeof(size_t) <= n) {
+            size_t w = load_known(src + i);
+            if (haszero(w))
+                break;
+            store_known(dst + i, w);
+            i += sizeof(size_t);
+        }
+    }
+#endif
     while (i < n && src[i] != '\0') {
         dst[i] = src[i];
         i++;
@@ -149,7 +206,71 @@ int rt_strcmp(const char *a, const char *b)
 
     /* Same alignment can peel onto a word boundary. Different alignment
        still loads words; the bytes after a NUL in that word are the
-       over-read, same as the aligned path. */
+       over-read, same as the aligned path. A misaligned ld traps, so
+       only the peeled path uses the aligned helper. */
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+    if ((((uintptr_t)x ^ (uintptr_t)y) & (sizeof(size_t) - 1)) == 0) {
+        while (((uintptr_t)x & (sizeof(size_t) - 1)) != 0) {
+            if (*x != *y || *x == 0)
+                return (int)*x - (int)*y;
+            x++;
+            y++;
+        }
+        for (;;) {
+            size_t wa = load_aligned(x);
+            size_t wb = load_aligned(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+            wa = load_aligned(x);
+            wb = load_aligned(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+            wa = load_aligned(x);
+            wb = load_aligned(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+            wa = load_aligned(x);
+            wb = load_aligned(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+        }
+    } else {
+        for (;;) {
+            size_t wa = load_word(x);
+            size_t wb = load_word(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+            wa = load_word(x);
+            wb = load_word(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+            wa = load_word(x);
+            wb = load_word(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+            wa = load_word(x);
+            wb = load_word(y);
+            if (wa != wb || haszero(wa))
+                break;
+            x += sizeof(size_t);
+            y += sizeof(size_t);
+        }
+    }
+#else
     if ((((uintptr_t)x ^ (uintptr_t)y) & (sizeof(size_t) - 1)) == 0) {
         while (((uintptr_t)x & (sizeof(size_t) - 1)) != 0) {
             if (*x != *y || *x == 0)
@@ -159,31 +280,32 @@ int rt_strcmp(const char *a, const char *b)
         }
     }
     for (;;) {
-        size_t wa = load_word(x);
-        size_t wb = load_word(y);
+        size_t wa = load_fast(x);
+        size_t wb = load_fast(y);
         if (wa != wb || haszero(wa))
             break;
         x += sizeof(size_t);
         y += sizeof(size_t);
-        wa = load_word(x);
-        wb = load_word(y);
+        wa = load_fast(x);
+        wb = load_fast(y);
         if (wa != wb || haszero(wa))
             break;
         x += sizeof(size_t);
         y += sizeof(size_t);
-        wa = load_word(x);
-        wb = load_word(y);
+        wa = load_fast(x);
+        wb = load_fast(y);
         if (wa != wb || haszero(wa))
             break;
         x += sizeof(size_t);
         y += sizeof(size_t);
-        wa = load_word(x);
-        wb = load_word(y);
+        wa = load_fast(x);
+        wb = load_fast(y);
         if (wa != wb || haszero(wa))
             break;
         x += sizeof(size_t);
         y += sizeof(size_t);
     }
+#endif
     while (*x && *x == *y) {
         x++;
         y++;
@@ -208,6 +330,29 @@ char *rt_strchr(const char *s, int c)
     unsigned char uc = (unsigned char)c;
     const unsigned char *p = (const unsigned char *)s;
 
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+    while (((uintptr_t)p & (sizeof(size_t) - 1)) != 0) {
+        if (*p == uc)
+            return (char *)p;
+        if (*p == 0)
+            return 0;
+        p++;
+    }
+    for (;;) {
+        size_t w = load_known(p);
+        size_t needle = (size_t)uc * ONES;
+        if (haszero(w) || haszero(w ^ needle))
+            break;
+        p += sizeof(size_t);
+    }
+    for (;;) {
+        if (*p == uc)
+            return (char *)p;
+        if (*p == 0)
+            return 0;
+        p++;
+    }
+#else
     /* 32 bytes is the chunk this clang turns into ldp / cmeq.16b / umaxv
        when the vectorizers are on. The chunk can include up to 31 bytes
        past the NUL, which is the same tail the neon strchr load uses.
@@ -231,12 +376,39 @@ char *rt_strchr(const char *s, int c)
             return 0;
         p++;
     }
+#endif
 }
 
 char *rt_strrchr(const char *s, int c)
 {
     unsigned char uc = (unsigned char)c;
     const char *last = 0;
+#if defined(__riscv) && !defined(RT_VECTORIZE)
+    {
+        const unsigned char *p = (const unsigned char *)s;
+        while (((uintptr_t)p & (sizeof(size_t) - 1)) != 0) {
+            if (*p == uc)
+                last = (const char *)p;
+            if (*p == 0)
+                return (char *)last;
+            p++;
+        }
+        for (;;) {
+            size_t w = load_known(p);
+            size_t needle = (size_t)uc * ONES;
+            size_t k;
+            if (haszero(w) || haszero(w ^ needle)) {
+                for (k = 0; k < sizeof(size_t); k++) {
+                    if (p[k] == uc)
+                        last = (const char *)(p + k);
+                    if (p[k] == 0)
+                        return (char *)last;
+                }
+            }
+            p += sizeof(size_t);
+        }
+    }
+#else
     for (;;) {
         if ((unsigned char)*s == uc)
             last = s;
@@ -244,6 +416,7 @@ char *rt_strrchr(const char *s, int c)
             return (char *)last;
         s++;
     }
+#endif
 }
 
 char *rt_strstr(const char *hay, const char *needle)
