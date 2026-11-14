@@ -101,6 +101,7 @@ verify: rt_memset_neon, n < 2^64 checked
 $ make
 $ make security
 $ make verify
+$ make riscv
 ```
 
 ## Credits

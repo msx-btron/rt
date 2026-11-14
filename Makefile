@@ -5,10 +5,11 @@
 # Linux x86_64: make       → scalar off, scalar on, sse2/avx/avx2/avx512
 # Linux + qemu: make qemu  → pentium2 + pentium3 tables
 # make avx512              → IA-32 and EM64T Alpine images, each ≤50MB
+# make riscv               → RVV32 contract, scalar and RVV64 tables vs Alpine musl
 # make security            → clang --analyze, flawfinder, cppcheck, ASCII report
 # make verify              → coqc verify/models/MemsetNeon.v (rt_memset_neon, n < 2^64)
 #
-.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 clean verify \
+.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 riscv clean verify \
 	security security-report sec-scalar sec-verify
 
 all: test
@@ -30,6 +31,9 @@ qemu-p2:
 
 avx512:
 	$(MAKE) -C verify avx512
+
+riscv:
+	$(MAKE) -C verify riscv
 
 # Coq check. One file: rt_memset_neon for every n below 2^64.
 # `coqc` is the compatibility name. Rocq 9.2's compiler is `rocq compile`.

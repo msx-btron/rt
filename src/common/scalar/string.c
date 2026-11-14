@@ -125,7 +125,9 @@ char *rt_strncpy(char *dst, const char *src, size_t n)
 
 char *rt_strcat(char *dst, const char *src)
 {
-    return rt_strcpy(dst + rt_strlen(dst), src);
+    /* strcpy returns the tail pointer. strcat returns the original dst. */
+    rt_strcpy(dst + rt_strlen(dst), src);
+    return dst;
 }
 
 char *rt_strncat(char *dst, const char *src, size_t n)

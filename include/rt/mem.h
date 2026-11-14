@@ -21,7 +21,8 @@
      neon/sve   AArch64
      sme        Apple SME2. memcpy, memmove, memset, memcmp.
                 The proved neon memset stays separate.
-     rvv        RV32 or RV64 V, m8 e8 (one object per XLEN)
+     rvv        RV32 or RV64 V, m8 e8 (one object per XLEN).
+                memcpy, memset, memcmp. memmove stays scalar.
 */
 
 void *rt_memcpy_scalar(void *dst, const void *src, size_t n);

@@ -33,6 +33,8 @@
 #define RT_RUN_SME 1
 #elif defined(RT_TABLE_SIMD)
 #define RT_RUN_SIMD 1
+#elif defined(RT_TABLE_RVV)
+#define RT_RUN_RVV 1
 #else
 #define RT_RUN_SCALAR 1
 #define RT_RUN_NEON 1
@@ -168,6 +170,7 @@ struct row {
     unsigned fails;
     uint64_t libc_ns; /* total measured wall for libc path */
     uint64_t rt_ns;   /* total measured wall for rt path */
+    int no_libc;      /* host libc has no symbol; libc ns and coef are N/A */
 };
 
 static struct row g_rows[MAX_ROWS];
@@ -246,25 +249,33 @@ static void print_one_backend(const char *backend)
 
         for (i = 0; i < g_nrows; i++) {
             struct row *r = &g_rows[i];
-            double c;
             const char *st_col, *coef_col, *name_col;
+            char libc_s[16];
             char coef_s[16];
             if (!row_in_backend_table(r, backend) || r->group != g)
                 continue;
-            c = coef(r);
-            snprintf(coef_s, sizeof coef_s, "%.2f", c);
             name_col = g_color ? grp_color[g] : "";
             st_col = r->fails ? (g_color ? C_RED : "") : (g_color ? C_GREEN : "");
-            if (c >= 1.05)
-                coef_col = g_color ? C_GREEN : "";
-            else if (c <= 0.95)
-                coef_col = g_color ? C_RED : "";
-            else
-                coef_col = g_color ? C_YELLOW : "";
+            if (r->no_libc) {
+                snprintf(libc_s, sizeof libc_s, "N/A");
+                snprintf(coef_s, sizeof coef_s, "N/A");
+                coef_col = "";
+            } else {
+                double c = coef(r);
+                snprintf(libc_s, sizeof libc_s, "%llu",
+                         (unsigned long long)r->libc_ns);
+                snprintf(coef_s, sizeof coef_s, "%.2f", c);
+                if (c >= 1.05)
+                    coef_col = g_color ? C_GREEN : "";
+                else if (c <= 0.95)
+                    coef_col = g_color ? C_RED : "";
+                else
+                    coef_col = g_color ? C_YELLOW : "";
+            }
 
-            printf("| %s%-16s%s | %8llu | %8llu | %6u | %s%4u%s | %s%8s%s |\n",
+            printf("| %s%-16s%s | %8s | %8llu | %6u | %s%4u%s | %s%8s%s |\n",
                    name_col, r->name, g_color ? C_RESET : "",
-                   (unsigned long long)r->libc_ns,
+                   libc_s,
                    (unsigned long long)r->rt_ns,
                    r->checks,
                    st_col, r->fails, g_color ? C_RESET : "",
@@ -294,7 +305,7 @@ static void print_report(void)
         printf("%srt host oracle%s — one table per accessible backend\n", C_BOLD, C_RESET);
     else
         printf("rt host oracle — one table per accessible backend\n");
-    printf("%slegend%s: coef = libc_ns/rt_ns · median of %d samples · 1.00 = parity\n",
+    printf("%slegend%s: coef = libc_ns/rt_ns · median of %d samples · 1.00 = parity · N/A = no libc symbol\n",
            g_color ? C_DIM : "", g_color ? C_RESET : "", SAMPLES);
 
     for (i = 0; i < g_nrows; i++) {
@@ -1255,7 +1266,27 @@ static void exercise_strings_misc(void)
                     && dst[2] == 'Z' && dst[3] == '\0'
                     && (unsigned char)dst[4] == 0xCC);
         }
-        if (r) { r->libc_ns = 1; r->rt_ns = 1; } /* no libc strscpy */
+        if (r) {
+            /* musl and Apple libc have no strscpy. Time rt. libc and coef are N/A. */
+            uint64_t rt_t[SAMPLES];
+            int si;
+            size_t k;
+            uint64_t t0, t1;
+            volatile size_t sink = 0;
+            char dst[32];
+            r->no_libc = 1;
+            for (k = 0; k < WARM; k++)
+                sink += rt_strscpy(dst, src, 16);
+            for (si = 0; si < SAMPLES; si++) {
+                t0 = now_ns();
+                for (k = 0; k < ITER_STR; k++)
+                    sink += rt_strscpy(dst, src, 16);
+                t1 = now_ns();
+                rt_t[si] = t1 - t0;
+            }
+            r->rt_ns = median_u64(rt_t, SAMPLES);
+            (void)sink;
+        }
     }
 }
 
@@ -1275,6 +1306,402 @@ static void run_strings(void)
     if (r) bench_strstr(r);
     exercise_strings_misc();
 }
+
+#if defined(__riscv) && (defined(RT_RUN_RVV) || defined(RT_RUN_SCALAR))
+/* One binary, one backend. The benches are the same for the C99 scalar
+   kernels and the RVV kernels so the two tables compare the same calls. */
+#if defined(RT_RUN_RVV)
+#define RT_STRLEN   rt_strlen_rvv
+#define RT_STRNLEN  rt_strnlen_rvv
+#define RT_STRCPY   rt_strcpy_rvv
+#define RT_STRNCPY  rt_strncpy_rvv
+#define RT_STRCAT   rt_strcat_rvv
+#define RT_STRNCAT  rt_strncat_rvv
+#define RT_STRCMP   rt_strcmp_rvv
+#define RT_STRNCMP  rt_strncmp_rvv
+#define RT_STRCHR   rt_strchr_rvv
+#define RT_STRRCHR  rt_strrchr_rvv
+#define RT_STRSTR   rt_strstr_rvv
+#define RT_STRPBRK  rt_strpbrk_rvv
+#define RT_STRSCPY  rt_strscpy_rvv
+#define RT_STRSCAT  rt_strscat_rvv
+#define RT_STRPAD   rt_strpad_rvv
+#define RT_BACKEND  "rvv"
+#else
+#define RT_STRLEN   rt_strlen
+#define RT_STRNLEN  rt_strnlen
+#define RT_STRCPY   rt_strcpy
+#define RT_STRNCPY  rt_strncpy
+#define RT_STRCAT   rt_strcat
+#define RT_STRNCAT  rt_strncat
+#define RT_STRCMP   rt_strcmp
+#define RT_STRNCMP  rt_strncmp
+#define RT_STRCHR   rt_strchr
+#define RT_STRRCHR  rt_strrchr
+#define RT_STRSTR   rt_strstr
+#define RT_STRPBRK  rt_strpbrk
+#define RT_STRSCPY  rt_strscpy
+#define RT_STRSCAT  rt_strscat
+#define RT_STRPAD   rt_strpad
+#define RT_BACKEND  "scalar"
+#endif
+/* libc_expr and rt_expr are the calls. A void call is written (call, 0). */
+#define RT_TIME(libc_expr, rt_expr)                                          \
+    do {                                                                     \
+        uint64_t lc_[SAMPLES], rt_[SAMPLES];                                 \
+        int si_;                                                             \
+        size_t k_;                                                           \
+        uint64_t t0_, t1_;                                                   \
+        volatile uintptr_t sink_ = 0;                                        \
+        for (k_ = 0; k_ < WARM; k_++) {                                      \
+            sink_ += (uintptr_t)(libc_expr);                                 \
+            sink_ += (uintptr_t)(rt_expr);                                   \
+        }                                                                    \
+        for (si_ = 0; si_ < SAMPLES; si_++) {                                \
+            t0_ = now_ns();                                                  \
+            for (k_ = 0; k_ < (size_t)ITER_STR; k_++)                        \
+                sink_ += (uintptr_t)(libc_expr);                             \
+            t1_ = now_ns();                                                  \
+            lc_[si_] = t1_ - t0_;                                            \
+            t0_ = now_ns();                                                  \
+            for (k_ = 0; k_ < (size_t)ITER_STR; k_++)                        \
+                sink_ += (uintptr_t)(rt_expr);                               \
+            t1_ = now_ns();                                                  \
+            rt_[si_] = t1_ - t0_;                                            \
+        }                                                                    \
+        r->libc_ns = median_u64(lc_, SAMPLES);                              \
+        r->rt_ns = median_u64(rt_, SAMPLES);                                 \
+        (void)sink_;                                                         \
+    } while (0)
+
+#define RT_TIME_RT(rt_expr)                                                  \
+    do {                                                                     \
+        uint64_t rt_[SAMPLES];                                               \
+        int si_;                                                             \
+        size_t k_;                                                           \
+        uint64_t t0_, t1_;                                                   \
+        volatile uintptr_t sink_ = 0;                                        \
+        r->no_libc = 1;                                                      \
+        for (k_ = 0; k_ < WARM; k_++)                                        \
+            sink_ += (uintptr_t)(rt_expr);                                   \
+        for (si_ = 0; si_ < SAMPLES; si_++) {                                \
+            t0_ = now_ns();                                                  \
+            for (k_ = 0; k_ < (size_t)ITER_STR; k_++)                        \
+                sink_ += (uintptr_t)(rt_expr);                               \
+            t1_ = now_ns();                                                  \
+            rt_[si_] = t1_ - t0_;                                            \
+        }                                                                    \
+        r->rt_ns = median_u64(rt_, SAMPLES);                                 \
+        (void)sink_;                                                         \
+    } while (0)
+
+static size_t ref_strlen_local(const char *s)
+{
+    size_t n = 0;
+    while (s[n] != '\0')
+        n++;
+    return n;
+}
+
+static size_t ref_strscpy(char *dst, const char *src, size_t n)
+{
+    size_t i = 0;
+    size_t len = ref_strlen_local(src);
+    if (n == 0)
+        return len;
+    while (i + 1 < n && src[i] != '\0') {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+    return len;
+}
+
+static size_t ref_strscat(char *dst, const char *src, size_t n)
+{
+    size_t used = 0;
+    while (used < n && dst[used] != '\0')
+        used++;
+    if (used >= n)
+        return used + ref_strlen_local(src);
+    return used + ref_strscpy(dst + used, src, n - used);
+}
+
+static void ref_strpad(char *dst, const char *src, size_t width, int fill)
+{
+    size_t i = 0;
+    while (i < width && src[i] != '\0') {
+        dst[i] = src[i];
+        i++;
+    }
+    while (i < width) {
+        dst[i] = (char)fill;
+        i++;
+    }
+}
+
+static void fill_pat(char *s, size_t n, int ch)
+{
+    size_t i;
+    for (i = 0; i < n; i++)
+        s[i] = (char)(ch < 0 ? ('A' + (int)(i % 26)) : ch);
+    s[n] = 0;
+}
+
+static void bench_bounded_rvv(struct row *r, int kind)
+{
+    static const size_t lens[] = { 0, 1, 2, 3, 7, 8, 15, 16, 17, 31, 32, 63, 64 };
+    static char src[160] __attribute__((aligned(64)));
+    static char da[160] __attribute__((aligned(64)));
+    static char db[160] __attribute__((aligned(64)));
+    size_t li;
+
+    for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+        size_t n = lens[li];
+        size_t cap;
+        fill_pat(src, n, -1);
+        if (n > 2)
+            src[n / 2] = (char)0xFF;
+        for (cap = 0; cap <= n + 3 && cap <= 80; cap++) {
+            memset(da, 0xA5, sizeof da);
+            memset(db, 0xA5, sizeof db);
+            if (kind == 0) {
+                row_add(r, RT_STRNCPY(db, src, cap) == db &&
+                        strncpy(da, src, cap) == da &&
+                        memcmp(da, db, cap + 1) == 0);
+            } else {
+                size_t lim = cap < 40 ? cap : 40;
+                row_add(r, RT_STRNLEN(src, lim) == strnlen(src, lim));
+            }
+        }
+    }
+    fill_pat(src, 64, -1);
+    if (kind == 0)
+        RT_TIME(strncpy(da, src, 48), RT_STRNCPY(db, src, 48));
+    else
+        RT_TIME(strnlen(src, 40), RT_STRNLEN(src, 40));
+}
+
+static void bench_copy_rvv(struct row *r)
+{
+    static const size_t lens[] = { 0, 1, 2, 7, 8, 15, 16, 31, 32, 63, 64, 127 };
+    static char src[256] __attribute__((aligned(64)));
+    static char da[256] __attribute__((aligned(64)));
+    static char db[256] __attribute__((aligned(64)));
+    size_t li;
+
+    for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+        size_t n = lens[li];
+        fill_pat(src, n, -1);
+        if (n)
+            src[n - 1] = (char)0xFF;
+        memset(da, 0xA5, sizeof da);
+        memset(db, 0xA5, sizeof db);
+        row_add(r, strcpy(da, src) == da && RT_STRCPY(db, src) == db &&
+                memcmp(da, db, n + 2) == 0);
+    }
+    fill_pat(src, 128, -1);
+    RT_TIME(strcpy(da, src), RT_STRCPY(db, src));
+}
+
+static void bench_cat_rvv(struct row *r, int bounded)
+{
+    static char src[128] __attribute__((aligned(64)));
+    static char da[256] __attribute__((aligned(64)));
+    static char db[256] __attribute__((aligned(64)));
+    static const size_t lens[] = { 0, 1, 3, 8, 16, 31 };
+    size_t li;
+
+    for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+        size_t n = lens[li];
+        fill_pat(src, n, -1);
+        memset(da, 0xA5, sizeof da);
+        memset(db, 0xA5, sizeof db);
+        memcpy(da, "pre", 4);
+        memcpy(db, "pre", 4);
+        if (!bounded) {
+            row_add(r, strcat(da, src) == da && RT_STRCAT(db, src) == db &&
+                    memcmp(da, db, 4 + n + 2) == 0);
+        } else {
+            row_add(r, strncat(da, src, 4) == da &&
+                    RT_STRNCAT(db, src, 4) == db &&
+                    memcmp(da, db, 16) == 0);
+            memset(da, 0xA5, sizeof da);
+            memset(db, 0xA5, sizeof db);
+            memcpy(da, "pre", 4);
+            memcpy(db, "pre", 4);
+            row_add(r, strncat(da, src, 80) == da &&
+                    RT_STRNCAT(db, src, 80) == db &&
+                    memcmp(da, db, 4 + n + 2) == 0);
+        }
+    }
+    fill_pat(src, 32, -1);
+    if (!bounded)
+        RT_TIME((memcpy(da, "head", 5), strcat(da, src)),
+                (memcpy(db, "head", 5), RT_STRCAT(db, src)));
+    else
+        RT_TIME((memcpy(da, "head", 5), strncat(da, src, 16)),
+                (memcpy(db, "head", 5), RT_STRNCAT(db, src, 16)));
+}
+
+static void bench_strncmp_rvv(struct row *r)
+{
+    static char a[128] __attribute__((aligned(64)));
+    static char b[128] __attribute__((aligned(64)));
+    char hi[4], lo[4];
+    size_t n;
+
+    row_add(r, RT_STRNCMP("abc", "xyz", 0) == 0);
+    row_add(r, RT_STRNCMP("abc", "abd", 2) == strncmp("abc", "abd", 2));
+    row_add(r, sign_eq(RT_STRNCMP("abc", "abd", 3), strncmp("abc", "abd", 3)));
+    row_add(r, sign_eq(RT_STRNCMP("ab", "abcd", 4), strncmp("ab", "abcd", 4)));
+    hi[0] = (char)0xFF;
+    hi[1] = 0;
+    lo[0] = 1;
+    lo[1] = 0;
+    row_add(r, sign_eq(RT_STRNCMP(hi, lo, 2), strncmp(hi, lo, 2)));
+    row_add(r, sign_eq(RT_STRNCMP(lo, hi, 2), strncmp(lo, hi, 2)));
+    for (n = 0; n <= 64; n++) {
+        fill_pat(a, 80, -1);
+        fill_pat(b, 80, -1);
+        if (n < 80)
+            b[n] = (char)(b[n] + 1);
+        row_add(r, sign_eq(RT_STRNCMP(a, b, n), strncmp(a, b, n)));
+    }
+    fill_pat(a, 64, -1);
+    fill_pat(b, 64, -1);
+    b[40] = 'z';
+    RT_TIME(strncmp(a, b, 64), RT_STRNCMP(a, b, 64));
+}
+
+static void bench_find_rvv(struct row *r, int last, int brk)
+{
+    static char hay[256] __attribute__((aligned(64)));
+    const char *p;
+    const char *q;
+
+    fill_pat(hay, 80, -1);
+    hay[10] = 'Z';
+    hay[40] = 'Z';
+    if (last) {
+        p = strrchr(hay, 'Z');
+        q = RT_STRRCHR(hay, 'Z');
+        row_add(r, p == q);
+        row_add(r, RT_STRRCHR(hay, 'q') == 0);
+        row_add(r, RT_STRRCHR(hay, 0) == strrchr(hay, 0));
+        row_add(r, RT_STRRCHR(hay, 256 + 'Z') == strrchr(hay, 256 + 'Z'));
+        RT_TIME(strrchr(hay, 'Z'), RT_STRRCHR(hay, 'Z'));
+    } else if (!brk) {
+        row_add(r, RT_STRSTR(hay, "Z") == strstr(hay, "Z"));
+        row_add(r, RT_STRSTR(hay, "") == hay);
+        row_add(r, RT_STRSTR(hay, "no-such") == 0);
+        row_add(r, RT_STRSTR("ababcabcd", "abc") == strstr("ababcabcd", "abc"));
+        row_add(r, RT_STRSTR("", "a") == 0);
+        {
+            char hi[8];
+            memcpy(hi, "a\377b", 4);
+            row_add(r, RT_STRSTR(hi, "\377b") == hi + 1);
+        }
+        RT_TIME(strstr(hay, "Z"), RT_STRSTR(hay, "Z"));
+    } else {
+        row_add(r, RT_STRPBRK(hay, "Z") == strpbrk(hay, "Z"));
+        row_add(r, RT_STRPBRK(hay, "") == 0);
+        row_add(r, RT_STRPBRK(hay, "q") == 0);
+        row_add(r, RT_STRPBRK("abc", "cba") == strpbrk("abc", "cba"));
+        RT_TIME(strpbrk(hay, "Z"), RT_STRPBRK(hay, "Z"));
+    }
+}
+
+static void bench_nolibc_rvv(struct row *r, int kind)
+{
+    static char src[64] __attribute__((aligned(64)));
+    static char da[96] __attribute__((aligned(64)));
+    static char db[96] __attribute__((aligned(64)));
+    size_t n;
+
+    fill_pat(src, 10, -1);
+    src[3] = (char)0xFF;
+    for (n = 0; n <= 16; n++) {
+        memset(da, 0xA5, sizeof da);
+        memset(db, 0xA5, sizeof db);
+        if (kind == 0) {
+            row_add(r, ref_strscpy(da, src, n) == RT_STRSCPY(db, src, n) &&
+                    memcmp(da, db, 24) == 0);
+        } else if (kind == 1) {
+            memcpy(da, "pre", 4);
+            memcpy(db, "pre", 4);
+            row_add(r, ref_strscat(da, src, n) == RT_STRSCAT(db, src, n) &&
+                    memcmp(da, db, 24) == 0);
+        } else {
+            ref_strpad(da, src, n, 0x141);
+            RT_STRPAD(db, src, n, 0x141);
+            row_add(r, memcmp(da, db, n + 1) == 0);
+        }
+    }
+    fill_pat(src, 32, -1);
+    if (kind == 0)
+        RT_TIME_RT(RT_STRSCPY(db, src, 24));
+    else if (kind == 1)
+        RT_TIME_RT((memcpy(db, "pre", 4), RT_STRSCAT(db, src, 24)));
+    else
+        RT_TIME_RT((RT_STRPAD(db, src, 24, ' '), 0));
+}
+
+static void run_strings_riscv(void)
+{
+    struct row *r;
+
+    r = row_begin("strlen", RT_BACKEND, GRP_STRING);
+    if (r) bench_strlen_fn(r, RT_STRLEN);
+    r = row_begin("strnlen", RT_BACKEND, GRP_STRING);
+    if (r) bench_bounded_rvv(r, 1);
+    r = row_begin("strcpy", RT_BACKEND, GRP_STRING);
+    if (r) bench_copy_rvv(r);
+    r = row_begin("strncpy", RT_BACKEND, GRP_STRING);
+    if (r) bench_bounded_rvv(r, 0);
+    r = row_begin("strcat", RT_BACKEND, GRP_STRING);
+    if (r) bench_cat_rvv(r, 0);
+    r = row_begin("strncat", RT_BACKEND, GRP_STRING);
+    if (r) bench_cat_rvv(r, 1);
+    r = row_begin("strcmp", RT_BACKEND, GRP_STRING);
+    if (r) bench_strcmp_fn(r, RT_STRCMP);
+    r = row_begin("strncmp", RT_BACKEND, GRP_STRING);
+    if (r) bench_strncmp_rvv(r);
+    r = row_begin("strchr", RT_BACKEND, GRP_STRING);
+    if (r) bench_strchr_fn(r, RT_STRCHR);
+    r = row_begin("strrchr", RT_BACKEND, GRP_STRING);
+    if (r) bench_find_rvv(r, 1, 0);
+    r = row_begin("strstr", RT_BACKEND, GRP_STRING);
+    if (r) bench_find_rvv(r, 0, 0);
+    r = row_begin("strpbrk", RT_BACKEND, GRP_STRING);
+    if (r) bench_find_rvv(r, 0, 1);
+    r = row_begin("strscpy", RT_BACKEND, GRP_STRING);
+    if (r) bench_nolibc_rvv(r, 0);
+    r = row_begin("strscat", RT_BACKEND, GRP_STRING);
+    if (r) bench_nolibc_rvv(r, 1);
+    r = row_begin("strpad", RT_BACKEND, GRP_STRING);
+    if (r) bench_nolibc_rvv(r, 2);
+}
+
+#undef RT_TIME
+#undef RT_TIME_RT
+#undef RT_STRLEN
+#undef RT_STRNLEN
+#undef RT_STRCPY
+#undef RT_STRNCPY
+#undef RT_STRCAT
+#undef RT_STRNCAT
+#undef RT_STRCMP
+#undef RT_STRNCMP
+#undef RT_STRCHR
+#undef RT_STRRCHR
+#undef RT_STRSTR
+#undef RT_STRPBRK
+#undef RT_STRSCPY
+#undef RT_STRSCAT
+#undef RT_STRPAD
+#undef RT_BACKEND
+#endif
 
 #if (defined(__aarch64__) || defined(__arm64__)) && defined(RT_RUN_NEON)
 static void run_strings_neon(void)
@@ -2244,6 +2671,8 @@ int main(void)
     printf("binary: sme\n");
 #elif defined(RT_TABLE_SIMD)
     printf("binary: simd\n");
+#elif defined(RT_TABLE_RVV)
+    printf("binary: rvv\n");
 #endif
 
 #if defined(__i386__) && !defined(__x86_64__)
@@ -2259,6 +2688,8 @@ int main(void)
     if (have_avx2()) printf(" avx2");
     if (have_avx512()) printf(" avx512");
     printf("\n");
+#elif defined(__riscv)
+    printf("host: riscv%u  ·  libc: musl\n", (unsigned)__riscv_xlen);
 #elif defined(__aarch64__) || defined(__arm64__)
     printf("host: ARM64");
 #if !defined(RT_TABLE_SCALAR) && !defined(RT_TABLE_NEON) && !defined(RT_TABLE_SME)
@@ -2291,7 +2722,7 @@ int main(void)
         return 1;
     }
 #endif
-#if defined(RT_RUN_SCALAR)
+#if defined(RT_RUN_SCALAR) && !defined(__riscv)
     run_mem_backend("scalar", rt_memcpy_scalar, rt_memmove_scalar,
                     rt_memset_scalar, rt_memcmp_scalar);
     run_strings();
@@ -2344,6 +2775,16 @@ int main(void)
         struct row *nr = row_begin("memcmp", "sme", GRP_MEMORY);
         if (nr) bench_memcmp(nr, rt_memcmp_sme);
     }
+#endif
+#elif defined(__riscv)
+#if defined(RT_RUN_SCALAR)
+    run_mem_backend("scalar", rt_memcpy_scalar, rt_memmove_scalar,
+                    rt_memset_scalar, rt_memcmp_scalar);
+    run_strings_riscv();
+#endif
+#if defined(RT_RUN_RVV)
+    run_mem_backend("rvv", rt_memcpy_rvv, 0, rt_memset_rvv, rt_memcmp_rvv);
+    run_strings_riscv();
 #endif
 #endif
 

@@ -1,5 +1,5 @@
 # BSD make (macOS) and GNU make.
-.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 clean
+.PHONY: all test test32 qemu qemu-p2 qemu-p3 avx512 riscv clean
 
 all: test
 
@@ -20,6 +20,9 @@ qemu-p2:
 
 avx512:
 	sh ../scripts/avx512.sh
+
+riscv:
+	sh ../scripts/riscv.sh
 
 clean:
 	rm -rf ../build
