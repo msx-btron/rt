@@ -285,7 +285,6 @@ jobs:
       - aarch64-sve
       - riscv-rvv32
       - riscv-rvv64
-      - riscv-hw-rvv64
       - mips-rcp
       - mips-ee
       - sqcsa
@@ -300,7 +299,7 @@ jobs:
           echo "aarch64-sve:        ${{ needs.aarch64-sve.result }}"
           echo "riscv-rvv32:        ${{ needs.riscv-rvv32.result }}"
           echo "riscv-rvv64:        ${{ needs.riscv-rvv64.result }}"
-          echo "riscv-hw-rvv64:     ${{ needs.riscv-hw-rvv64.result }}"
+          echo "riscv-hw-rvv64:     disabled"
           echo "mips-rcp:           ${{ needs.mips-rcp.result }}"
           echo "mips-ee:            ${{ needs.mips-ee.result }}"
           echo "sqcsa:              ${{ needs.sqcsa.result }}"
@@ -313,7 +312,6 @@ jobs:
             "${{ needs.aarch64-sve.result }}" \
             "${{ needs.riscv-rvv32.result }}" \
             "${{ needs.riscv-rvv64.result }}" \
-#            "${{ needs.riscv-hw-rvv64.result }}" \
             "${{ needs.mips-rcp.result }}" \
             "${{ needs.mips-ee.result }}" \
             "${{ needs.sqcsa.result }}" \
