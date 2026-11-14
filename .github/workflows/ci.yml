@@ -20,7 +20,7 @@ jobs:
   # Host oracle: scalar + SSE2 + AVX + AVX2 + AVX-512 (CPU-probed)
   # ------------------------------------------------------------------
   x86_64-native:
-    name: EM64T SSE2/AVX/AVX2/AVX-512
+    name: EM64T SSE2/AVX/AVX2
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
