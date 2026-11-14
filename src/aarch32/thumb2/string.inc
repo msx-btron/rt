@@ -1,4 +1,4 @@
-/* Thumb-2 strings. RT_SUF is set by the wrapper.
+/* Thumb-2 strings. RT_SUF comes from thumb2/string.S.
    strlen, strcmp, strcpy, and strchr scan a word at a time and do not
    store a word that contains a NUL. A word load is refused when the next
    four bytes would cross a 4 KiB page. Bounded copies are in rest.inc. */

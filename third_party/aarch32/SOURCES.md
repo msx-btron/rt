@@ -1,7 +1,11 @@
 # AArch32 libc opponents
 
-These are baselines. They are not RT kernels. `src/aarch32/` names the
-same URLs on each stream. One guest links one `memcpy`. `$ make aarch32`
+These are baselines. They are not RT kernels. RT has five kernels:
+ARM1176, NEON, Cortex-M0, thumb2, and Cortex-M55. The thumb2 kernel
+is one source. M3, M4, M33, and M35P build it narrow. M7 builds it
+with PLD and a 32-byte LDM. The nine guests still each get a table.
+`src/aarch32/` names the same URLs on each stream. One guest links
+one `memcpy`. `$ make aarch32`
 prints picolibc on Cortex-M and Arm Optimized Routines on A-profile,
 then one more table for each other imported memcpy (visenri and LLVM
 on M0, NuttX and LLVM on M3, M4, M7, and M33). `A32_LIBC` selects one

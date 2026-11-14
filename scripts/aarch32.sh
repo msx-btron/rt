@@ -1,12 +1,14 @@
 #!/bin/sh
-# AArch32 freestanding contracts. One guest per instruction stream:
-#   arm1176  ARMv6 ARM, Pi 1 / Zero / CM1, raspi0
-#   a32      AArch32 NEON, Pi 2/3/4 and STM32MP15, virt A7 and A15
-#   m0       Thumb-1, STM32 M0/M0+, microbit
-#   m3 m4    Thumb-2 integer, mps2-an385 / an386
-#   m7       Thumb-2 + PLD, mps2-an500
-#   m33      ARMv8-M Mainline, mps2-an505
-#   m55      Helium, mps3-an547
+# AArch32 freestanding contracts. Five kernels, nine guests.
+#   ARM1176   ARMv6 integer, strict alignment. Pi 1 / Zero / CM1.
+#   NEON      AArch32 Advanced SIMD. virt Cortex-A7 and Cortex-A15.
+#   Cortex-M0 Thumb-1, strict alignment. M0, M0+, M1, M23.
+#   thumb2    One body for M3, M4, M7, M33, M35P. M7 sets RT_PLD and
+#             RT_WIDE. The others build the narrow body. pld faults
+#             on M3 and M4.
+#   Cortex-M55 Helium. M85 uses this kernel. No M85 guest yet.
+# Guests stay one per core: m0, m3, m4, m7, m33, m55, a32-a7, a32-a15,
+# arm1176. M4 and M33 exist to prove the narrow body runs on those CPUs.
 # Pi 5 is AArch64. ESP32 is Xtensa or RISC-V. Neither is built here.
 # Guest times are QEMU ticks, not silicon, and do not go in bench.html.
 # QEMU has no DWT CYCCNT. Those guests time with semihost SYS_ELAPSED
@@ -76,13 +78,14 @@ build_m() {
     str=$5
     ld=$6
     extra=$7
+    kdef=$8
     $CLANG -target "$target" -mcpu="$cpu" -mthumb $CF $extra \
         -c -o "$OUT/bench-$suf.o" verify/suite/a32_bench.c -DRT_SUF="$suf"
     $CLANG -target "$target" -mcpu="$cpu" -mthumb $extra \
         -c -o "$OUT/start-$suf.o" "$A32/m_start.S"
-    $CLANG -target "$target" -mcpu="$cpu" -mthumb \
+    $CLANG -target "$target" -mcpu="$cpu" -mthumb $kdef \
         -c -o "$OUT/mem-$suf.o" "$mem"
-    $CLANG -target "$target" -mcpu="$cpu" -mthumb \
+    $CLANG -target "$target" -mcpu="$cpu" -mthumb $kdef \
         -c -o "$OUT/str-$suf.o" "$str"
     set -- "$OUT/start-$suf.o" "$OUT/bench-$suf.o" \
         "$OUT/mem-$suf.o" "$OUT/str-$suf.o"
@@ -372,47 +375,51 @@ run_modes() {
         fi
         build_m m0 thumbv6m-none-eabi cortex-m0 \
             "$SRC/Cortex-M0/mem.S" "$SRC/Cortex-M0/string.S" "$A32/m_microbit.ld" \
-            "$guest_defs $bdef $srcdef"
+            "$guest_defs $bdef $srcdef" ""
         run_guest m0 "$OUT/m0.elf" $QEMU -M microbit $qbase -kernel "$OUT/m0.elf"
     fi
 
     if only_guest m3; then
         srcdef=
-        add_src RT_KERNEL "src/aarch32/Cortex-M3/"
+        add_src RT_KERNEL "src/aarch32/thumb2/"
         pico_thumb2 m3 thumbv7m-none-eabi cortex-m3 ""
         build_m m3 thumbv7m-none-eabi cortex-m3 \
-            "$SRC/Cortex-M3/mem.S" "$SRC/Cortex-M3/string.S" "$A32/m_mps2.ld" \
-            "-DRT_DWT $guest_defs $bdef $srcdef"
+            "$SRC/thumb2/mem.S" "$SRC/thumb2/string.S" "$A32/m_mps2.ld" \
+            "-DRT_DWT $guest_defs $bdef $srcdef" \
+            "-DRT_SUF=m3 -DRT_PLD=0 -DRT_WIDE=0"
         run_guest m3 "$OUT/m3.elf" $QEMU -M mps2-an385 $qbase -kernel "$OUT/m3.elf"
     fi
 
     if only_guest m4; then
         srcdef=
-        add_src RT_KERNEL "src/aarch32/Cortex-M4/"
+        add_src RT_KERNEL "src/aarch32/thumb2/"
         pico_thumb2 m4 thumbv7em-none-eabi cortex-m4 "-mfpu=none"
         build_m m4 thumbv7em-none-eabi cortex-m4 \
-            "$SRC/Cortex-M4/mem.S" "$SRC/Cortex-M4/string.S" "$A32/m_mps2.ld" \
-            "-mfpu=none -DRT_DWT $guest_defs $bdef $srcdef"
+            "$SRC/thumb2/mem.S" "$SRC/thumb2/string.S" "$A32/m_mps2.ld" \
+            "-mfpu=none -DRT_DWT $guest_defs $bdef $srcdef" \
+            "-DRT_SUF=m4 -DRT_PLD=0 -DRT_WIDE=0"
         run_guest m4 "$OUT/m4.elf" $QEMU -M mps2-an386 $qbase -kernel "$OUT/m4.elf"
     fi
 
     if only_guest m7; then
         srcdef=
-        add_src RT_KERNEL "src/aarch32/Cortex-M7/"
+        add_src RT_KERNEL "src/aarch32/thumb2/"
         pico_thumb2 m7 thumbv7em-none-eabi cortex-m7 "-mfpu=none"
         build_m m7 thumbv7em-none-eabi cortex-m7 \
-            "$SRC/Cortex-M7/mem.S" "$SRC/Cortex-M7/string.S" "$A32/m_mps2.ld" \
-            "-mfpu=none -DRT_DWT $guest_defs $bdef $srcdef"
+            "$SRC/thumb2/mem.S" "$SRC/thumb2/string.S" "$A32/m_mps2.ld" \
+            "-mfpu=none -DRT_DWT $guest_defs $bdef $srcdef" \
+            "-DRT_SUF=m7 -DRT_PLD=1 -DRT_WIDE=1"
         run_guest m7 "$OUT/m7.elf" $QEMU -M mps2-an500 $qbase -kernel "$OUT/m7.elf"
     fi
 
     if only_guest m33; then
         srcdef=
-        add_src RT_KERNEL "src/aarch32/Cortex-M33/"
+        add_src RT_KERNEL "src/aarch32/thumb2/"
         pico_thumb2 m33 thumbv8m.main-none-eabi cortex-m33 ""
         build_m m33 thumbv8m.main-none-eabi cortex-m33 \
-            "$SRC/Cortex-M33/mem.S" "$SRC/Cortex-M33/string.S" "$A32/m_an505.ld" \
-            "-DRT_DWT $guest_defs $bdef $srcdef"
+            "$SRC/thumb2/mem.S" "$SRC/thumb2/string.S" "$A32/m_an505.ld" \
+            "-DRT_DWT $guest_defs $bdef $srcdef" \
+            "-DRT_SUF=m33 -DRT_PLD=0 -DRT_WIDE=0"
         run_guest m33 "$OUT/m33.elf" $QEMU -M mps2-an505 $qbase -kernel "$OUT/m33.elf"
     fi
 
@@ -423,7 +430,7 @@ run_modes() {
         end_libc m55 thumbv8.1m.main-none-eabi cortex-m55 -mthumb "" thumb
         build_m m55 thumbv8.1m.main-none-eabi cortex-m55 \
             "$SRC/Cortex-M55/mem.S" "$SRC/Cortex-M55/string.S" "$A32/m_an547.ld" \
-            "-DRT_DWT -DRT_CPACR $libc_defs $bdef $srcdef"
+            "-DRT_DWT -DRT_CPACR $libc_defs $bdef $srcdef" ""
         run_guest m55 "$OUT/m55.elf" $QEMU -M mps3-an547 $qbase -kernel "$OUT/m55.elf"
     fi
 

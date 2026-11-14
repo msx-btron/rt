@@ -1,4 +1,5 @@
-/* Helium strings. A 16-byte load stays inside one 4 KiB page.
+/* Helium strings for Cortex-M55 and Cortex-M85.
+   A 16-byte load stays inside one 4 KiB page.
    vminv finds a NUL. A match is a lane that xors to zero against
    the splatted character. Bounded copies are Thumb-2 bytes.
    No published Helium strlen or strcmp. The only libc string that

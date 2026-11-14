@@ -1,5 +1,5 @@
 /* Thumb-2 memcpy, memset, memcmp.
-   The wrapper sets RT_SUF, RT_UNALIGNED, RT_PLD, and RT_WIDE.
+   thumb2/mem.S sets RT_SUF, RT_UNALIGNED, RT_PLD, and RT_WIDE.
    A multi-register store is used only when the destination is aligned.
    An unaligned word load is used only when RT_UNALIGNED is 1.
    LDM is never used on an unaligned address. PLD is M7 only.
