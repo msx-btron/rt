@@ -144,10 +144,11 @@ jobs:
             echo "sve runtime not available on this QEMU (asm still verified)"
 
   # ------------------------------------------------------------------
-  # RVV32 and RVV64 under QEMU virt. Same script as `make riscv`.
+  # Two guests, same script as `make riscv`. Each job is one XLEN:
+  # freestanding contract, then scalar off, scalar on, and RVV.
   # ------------------------------------------------------------------
-  riscv-rvv:
-    name: RVV32 and RVV64
+  riscv-rvv32:
+    name: RISC-V RVV32
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -156,8 +157,21 @@ jobs:
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             clang lld qemu-system-misc curl python3 cpio gzip
-      - name: RVV32 and RVV64
-        run: sh scripts/riscv.sh
+      - name: RISC-V RVV32
+        run: sh scripts/riscv.sh 32
+
+  riscv-rvv64:
+    name: RISC-V RVV64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang, lld, and QEMU system
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            clang lld qemu-system-misc curl python3 cpio gzip
+      - name: RISC-V RVV64
+        run: sh scripts/riscv.sh 64
 
   # ------------------------------------------------------------------
   # SQCSA Test Suite — `make security` must come back clean
@@ -212,7 +226,8 @@ jobs:
       - i386-qemu
       - aarch64-neon-qemu
       - aarch64-sve
-      - riscv-rvv
+      - riscv-rvv32
+      - riscv-rvv64
       - sqcsa
       - verify
     if: always()
@@ -223,7 +238,8 @@ jobs:
           echo "i386-qemu:          ${{ needs.i386-qemu.result }}"
           echo "aarch64-neon-qemu:  ${{ needs.aarch64-neon-qemu.result }}"
           echo "aarch64-sve:        ${{ needs.aarch64-sve.result }}"
-          echo "riscv-rvv:          ${{ needs.riscv-rvv.result }}"
+          echo "riscv-rvv32:        ${{ needs.riscv-rvv32.result }}"
+          echo "riscv-rvv64:        ${{ needs.riscv-rvv64.result }}"
           echo "sqcsa:              ${{ needs.sqcsa.result }}"
           echo "verify:             ${{ needs.verify.result }}"
           # Fail the workflow if any required job failed
@@ -232,7 +248,8 @@ jobs:
             "${{ needs.i386-qemu.result }}" \
             "${{ needs.aarch64-neon-qemu.result }}" \
             "${{ needs.aarch64-sve.result }}" \
-            "${{ needs.riscv-rvv.result }}" \
+            "${{ needs.riscv-rvv32.result }}" \
+            "${{ needs.riscv-rvv64.result }}" \
             "${{ needs.sqcsa.result }}" \
             "${{ needs.verify.result }}"
           do

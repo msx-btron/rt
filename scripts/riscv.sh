@@ -598,14 +598,44 @@ EOF
     echo "riscv: riscv${g_xlen} scalar off, scalar on, and RVV ok"
 }
 
+run_one() {
+    case "$1" in
+    64)
+        compile_width 64 lp64
+        run_width 64
+        echo "riscv: RVV64 contract ok"
+        prepare_rv64
+        build_and_boot
+        ;;
+    32)
+        compile_width 32 ilp32
+        run_width 32
+        echo "riscv: RVV32 contract ok"
+        prepare_rv32
+        build_and_boot
+        ;;
+    *)
+        echo "riscv: usage: scripts/riscv.sh [32|64]" >&2
+        exit 1
+        ;;
+    esac
+}
+
 echo "riscv: $CC"
-compile_width 64 lp64
-compile_width 32 ilp32
-run_width 64
-run_width 32
-echo "riscv: RVV32 and RVV64 contracts ok"
-prepare_rv64
-build_and_boot
-prepare_rv32
-build_and_boot
-echo "riscv: rv32 Bootlin musl and rv64 Alpine musl: scalar off, scalar on, and RVV ok"
+case "${1:-both}" in
+both)
+    run_one 64
+    run_one 32
+    echo "riscv: rv32 Bootlin musl and rv64 Alpine musl: scalar off, scalar on, and RVV ok"
+    ;;
+64|rv64)
+    run_one 64
+    ;;
+32|rv32)
+    run_one 32
+    ;;
+*)
+    echo "riscv: usage: scripts/riscv.sh [32|64]" >&2
+    exit 1
+    ;;
+esac
