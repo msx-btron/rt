@@ -5,10 +5,11 @@
 # Linux x86_64: make       → scalar off, scalar on, sse2/avx/avx2/avx512
 # Linux + qemu: make qemu  → pentium2 + pentium3 tables
 # make avx512              → IA-32 and EM64T Alpine images, each ≤50MB
-# make riscv               → RVV32 and RVV64 contracts, then two musl guests.
+# make riscv               → QEMU: RVV32 and RVV64 contracts, then two musl guests.
 #                            rv32 Bootlin and rv64 Alpine. Each guest runs
 #                            scalar (vectorize off), scalar (vectorize on),
 #                            and RVV assembly.
+# scripts/riscv_hw.sh      → native riscv64 board. Cloud-V BPI-F3 runs it.
 # make security            → clang --analyze, flawfinder, cppcheck, ASCII report
 # make verify              → coqc verify/models/MemsetNeon.v (rt_memset_neon, n < 2^64)
 #

@@ -2693,7 +2693,10 @@ int main(void)
     if (have_avx512()) printf(" avx512");
     printf("\n");
 #elif defined(__riscv)
-    printf("host: riscv%u  ·  libc: musl\n", (unsigned)__riscv_xlen);
+#ifndef RT_LIBC_NAME
+#define RT_LIBC_NAME "musl"
+#endif
+    printf("host: riscv%u  ·  libc: %s\n", (unsigned)__riscv_xlen, RT_LIBC_NAME);
 #elif defined(__aarch64__) || defined(__arm64__)
     printf("host: ARM64");
 #if !defined(RT_TABLE_SCALAR) && !defined(RT_TABLE_NEON) && !defined(RT_TABLE_SME)

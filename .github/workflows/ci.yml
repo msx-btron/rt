@@ -1,5 +1,6 @@
 # rt — multi-arch kernel CI
-# Native x86_64, QEMU user-mode for IA-32 and AArch64, QEMU virt for RVV.
+# Native x86_64, QEMU user-mode for IA-32 and AArch64, QEMU virt for RVV,
+# and one Cloud-V board for RVV 1.0 silicon.
 name: ci
 
 on:
@@ -174,6 +175,29 @@ jobs:
         run: sh scripts/riscv.sh 64
 
   # ------------------------------------------------------------------
+  # Physical RV64GC + RVV 1.0. SpacemiT K1 on a Banana Pi BPI-F3.
+  # The QEMU jobs above stay. This job compiles and runs on the board
+  # against that image's glibc. Nanoseconds are the board clock.
+  # RV32 has no native runner here. VisionFive 2 has no V. Pioneer
+  # and the RISE EM-RV1 are RVV 0.7.1, which these kernels do not use.
+  # Install the Cloud-V GitHub Runners app on this repository or the
+  # job stays queued.
+  # ------------------------------------------------------------------
+  riscv-hw-rvv64:
+    name: RISC-V HW RVV64
+    runs-on: [self-hosted, banana-pi-f3]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            clang binutils libc6-dev
+      - name: RISC-V HW RVV64
+        run: sh scripts/riscv_hw.sh
+
+  # ------------------------------------------------------------------
   # SQCSA Test Suite — `make security` must come back clean
   # ------------------------------------------------------------------
   sqcsa:
@@ -228,6 +252,7 @@ jobs:
       - aarch64-sve
       - riscv-rvv32
       - riscv-rvv64
+      - riscv-hw-rvv64
       - sqcsa
       - verify
     if: always()
@@ -240,6 +265,7 @@ jobs:
           echo "aarch64-sve:        ${{ needs.aarch64-sve.result }}"
           echo "riscv-rvv32:        ${{ needs.riscv-rvv32.result }}"
           echo "riscv-rvv64:        ${{ needs.riscv-rvv64.result }}"
+          echo "riscv-hw-rvv64:     ${{ needs.riscv-hw-rvv64.result }}"
           echo "sqcsa:              ${{ needs.sqcsa.result }}"
           echo "verify:             ${{ needs.verify.result }}"
           # Fail the workflow if any required job failed
@@ -250,6 +276,7 @@ jobs:
             "${{ needs.aarch64-sve.result }}" \
             "${{ needs.riscv-rvv32.result }}" \
             "${{ needs.riscv-rvv64.result }}" \
+            "${{ needs.riscv-hw-rvv64.result }}" \
             "${{ needs.sqcsa.result }}" \
             "${{ needs.verify.result }}"
           do
