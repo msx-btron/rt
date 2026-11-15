@@ -92,6 +92,8 @@ https://github.com/ARM-software/optimized-routines/tree/v25.01/string/arm
 | `strcmp.S` | Thumb, Cortex-A7 | `__strcmp_arm` |
 | `strlen-armv6t2.S` | Thumb, Cortex-A7 | `__strlen_armv6t2` |
 
+The NEON copy of `memcpy.S` keeps the upstream instructions. `.arch armv7-a` is placed before `.fpu neon`. Clang 18 clears the FPU when it sees `.arch`, and the AArch32 job then rejects `vld1`.
+
 There is no memcmp in this tag. memset, strcmp, and strlen are Thumb-2
 and are not linked on ARM1176 or Cortex-M. glibc's armv7 IFUNC selects
 this family and is not vendored:

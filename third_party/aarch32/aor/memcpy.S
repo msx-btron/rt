@@ -1,6 +1,7 @@
 /* Source: https://github.com/ARM-software/optimized-routines/blob/v25.01/string/arm/memcpy.S
    Revision: v25.01
-   Local addition: this comment only.
+   Local change: .arch armv7-a comes before .fpu neon. Clang 18 resets
+   the FPU on .arch, then rejects vld1.
  */
 /*
  * memcpy - copy memory area
@@ -29,8 +30,8 @@
 
 #ifdef __ARM_NEON__
 
-	.fpu	neon
 	.arch	armv7-a
+	.fpu	neon
 # define FRAME_SIZE	4
 # define USE_VFP
 # define USE_NEON
