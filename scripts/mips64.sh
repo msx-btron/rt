@@ -328,7 +328,7 @@ resolve_pcsx2() {
             echo "mips: curl is required to fetch PCSX2" >&2
             return 1
         fi
-        echo "mips: fetch PCSX2 2.8.2 AppImage"
+        echo "mips: fetch PCSX2 2.8.2 AppImage" >&2
         curl -fL --retry 3 --retry-delay 2 -o "$img.partial" "$PCSX2_URL"
         if [ "$(sha256_file "$img.partial")" != "$PCSX2_SHA" ]; then
             echo "mips: PCSX2 checksum mismatch" >&2
@@ -338,10 +338,10 @@ resolve_pcsx2() {
         mv "$img.partial" "$img"
         chmod +x "$img"
     fi
-    root=$OBJ/pcsx2-v2.8.2
+    root=$(cd "$OBJ" && pwd)/pcsx2-v2.8.2
     if [ ! -x "$root/AppRun" ]; then
         rm -rf "$root" "$OBJ/squashfs-root"
-        ( cd "$OBJ" && "$img" --appimage-extract >/dev/null )
+        ( cd "$OBJ" && "./$PCSX2_IMG" --appimage-extract >/dev/null )
         if [ ! -d "$OBJ/squashfs-root" ]; then
             echo "mips: PCSX2 AppImage did not extract" >&2
             return 1
