@@ -116,4 +116,4 @@ $ make aarch32
 
 ## Credits
 
-* Maksym Sokhatsky
+* Maksym Sokhatskyi
