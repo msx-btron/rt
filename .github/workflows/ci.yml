@@ -259,11 +259,11 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             clang lld binutils-mipsel-linux-gnu \
             gcc-13-mips64el-linux-gnuabi64 \
-            curl ca-certificates xvfb libgl1-mesa-dri libgl1 libfuse2t64 || \
+            curl ca-certificates xvfb libopengl0 libegl1 libgl1-mesa-dri libgl1 libfuse2t64 || \
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
             clang lld binutils-mipsel-linux-gnu \
             gcc-13-mips64el-linux-gnuabi64 \
-            curl ca-certificates xvfb libgl1-mesa-dri libgl1 libfuse2
+            curl ca-certificates xvfb libopengl0 libegl1 libgl1-mesa-dri libgl1 libfuse2
       - name: PlayStation 2 tables
         run: sh scripts/mips64.sh ee
 
