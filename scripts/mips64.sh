@@ -230,7 +230,12 @@ wait_guest() {
         echo "mips: $name did not finish" >&2
         tail -30 "$OBJ/$name.txt" >&2
         if [ -s "$OBJ/$name.err" ]; then
+            echo "--- stderr ---" >&2
             tail -30 "$OBJ/$name.err" >&2
+        fi
+        if [ -s "$OBJ/$name.out" ]; then
+            echo "--- stdout ---" >&2
+            tail -30 "$OBJ/$name.out" >&2
         fi
         exit 1
     fi
@@ -394,23 +399,16 @@ EnableTimestamps = true
 EnableEEConsole = true
 EnableIOPConsole = true
 EOF
-    if [ "$(uname -s)" = "Linux" ]; then
-        cat >> "$data/PCSX2/inis/PCSX2.ini" << 'EOF'
-
-[EmuCore/GS]
-Renderer = 11
-EOF
-    fi
     : > "$log"
     banner "$name"
     if [ "$(uname -s)" = "Linux" ] && [ -z "${DISPLAY:-}" ] && have xvfb-run; then
-        xvfb-run -a "$pcsx2" -nogui -batch -fastboot -nofullscreen \
-            -earlyconsolelog -logfile "$log" -datapath "$data" "$real" \
-            >/dev/null 2>"$OBJ/$name.err" &
+        xvfb-run -a -s "-screen 0 1280x1024x24" "$pcsx2" -nogui -batch -fastboot -nofullscreen \
+            -earlyconsolelog -logfile "$log" -datapath "$data" -elf "$real" \
+            >"$OBJ/$name.out" 2>"$OBJ/$name.err" &
     else
         "$pcsx2" -nogui -batch -fastboot -nofullscreen -earlyconsolelog \
-            -logfile "$log" -datapath "$data" "$real" \
-            >/dev/null 2>"$OBJ/$name.err" &
+            -logfile "$log" -datapath "$data" -elf "$real" \
+            >"$OBJ/$name.out" 2>"$OBJ/$name.err" &
     fi
     wait_guest "$name" "$!" "$log" 300
     rm -rf "$data"
