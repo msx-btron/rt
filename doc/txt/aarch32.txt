@@ -9,7 +9,7 @@
 
  Name: AArch32.txt
  Copyright: (c) 2025 Namdak Tonpa, BitEdits Corporation.
- Version: 2025-07-15
+ Version: 2026-11-15
  Size: 64KB
 
  ├── 10 Architecture  # ARMv7-A/R + all Cortex-A/R profiles
@@ -1245,9 +1245,9 @@ Profile notes
     4. ret2usr     → SVC return path
 
 =========================================================================================
-Автор: Максим Сохацький (mes@ua.fm)
+Автор: Максим Сохацький (maxim@synrc.com)
 
 ┳┓• ┏┓ ┓•
 ┣┫┓╋┣ ┏┫┓╋┏
 ┻┛┗┗┗┛┗┻┗┗┛
-2054
+2024

@@ -95,15 +95,36 @@ rt_memmove_rv64:
     addi a2, a2, -1
     j .Lmv_peel
 .Lmv_words:
-    li t3, 8
-.Lmv_word:
-    bltu a2, t3, .Lmv_done
+    andi t0, a2, 63
+    add a3, a0, t0
+    beq t4, a3, .Lmv_w8
+.Lmv_64:
+    addi t4, t4, -64
+    addi t5, t5, -64
+    ld t0, 0(t5)
+    ld t1, 8(t5)
+    ld t2, 16(t5)
+    ld t3, 24(t5)
+    ld a4, 32(t5)
+    ld a5, 40(t5)
+    ld a6, 48(t5)
+    ld a7, 56(t5)
+    sd t0, 0(t4)
+    sd t1, 8(t4)
+    sd t2, 16(t4)
+    sd t3, 24(t4)
+    sd a4, 32(t4)
+    sd a5, 40(t4)
+    sd a6, 48(t4)
+    sd a7, 56(t4)
+    bne t4, a3, .Lmv_64
+.Lmv_w8:
+    beq t4, a0, .Lmv_done
     addi t4, t4, -8
     addi t5, t5, -8
     ld t0, 0(t5)
     sd t0, 0(t4)
-    addi a2, a2, -8
-    j .Lmv_word
+    j .Lmv_w8
 .Lmv_bytes:
     add t4, a0, a2
     add t5, a1, a2
@@ -145,16 +166,31 @@ rt_memset_rv64:
     addi t1, t1, -1
     j .Lms_peel
 .Lms_words:
-    li t3, 32
+    add t4, a0, a2
+    andi t0, a2, 127
+    sub t5, t4, t0
+    beq a0, t5, .Lms_rest
 .Lms_chunk:
-    bltu a2, t3, .Lms_one
     sd a1, 0(a0)
     sd a1, 8(a0)
     sd a1, 16(a0)
     sd a1, 24(a0)
-    addi a0, a0, 32
-    addi a2, a2, -32
-    j .Lms_chunk
+    sd a1, 32(a0)
+    sd a1, 40(a0)
+    sd a1, 48(a0)
+    sd a1, 56(a0)
+    sd a1, 64(a0)
+    sd a1, 72(a0)
+    sd a1, 80(a0)
+    sd a1, 88(a0)
+    sd a1, 96(a0)
+    sd a1, 104(a0)
+    sd a1, 112(a0)
+    sd a1, 120(a0)
+    addi a0, a0, 128
+    bne a0, t5, .Lms_chunk
+.Lms_rest:
+    sub a2, t4, a0
 .Lms_one:
     li t3, 8
     bltu a2, t3, .Lms_bytes

@@ -8,7 +8,8 @@
 # make riscv               → QEMU: RVV32 and RVV64 contracts, then two musl guests.
 #                            rv32 Bootlin and rv64 Alpine. Each guest runs
 #                            scalar (vectorize off), scalar (vectorize on),
-#                            RVV assembly, and the integer rv32 or rv64 memory.
+#                            RVV assembly, and the integer rv32 or rv64
+#                            memory and strings.
 # make mips                → PlayStation 2 tiers under PCSX2, and
 #                            Nintendo 64 tiers under
 #                            qemu-system-mips64el -M malta -cpu R4000.

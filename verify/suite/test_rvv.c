@@ -1,5 +1,5 @@
 /* Contract checker for the RVV memory and string kernels, and for the
-   integer rv32/rv64 memory kernels linked beside them.
+   integer rv32/rv64 memory and string kernels linked beside them.
    No libc. QEMU virt runs it; a fault at the end of the 4MB RAM is a
    failed over-read. Guest time is not a result. */
 #include "rt/mem.h"
@@ -623,11 +623,41 @@ static void test_edge(void)
 #define RT_SC_MOV rt_memmove_rv64
 #define RT_SC_SET rt_memset_rv64
 #define RT_SC_CMP rt_memcmp_rv64
+#define RT_SLEN   rt_strlen_rv64
+#define RT_SNLEN  rt_strnlen_rv64
+#define RT_SCPY   rt_strcpy_rv64
+#define RT_SNCPY  rt_strncpy_rv64
+#define RT_SCAT   rt_strcat_rv64
+#define RT_SNCAT  rt_strncat_rv64
+#define RT_SCMP   rt_strcmp_rv64
+#define RT_SNCMP  rt_strncmp_rv64
+#define RT_SCHR   rt_strchr_rv64
+#define RT_SRCHR  rt_strrchr_rv64
+#define RT_SSTR   rt_strstr_rv64
+#define RT_SPBRK  rt_strpbrk_rv64
+#define RT_SSCPY  rt_strscpy_rv64
+#define RT_SSCAT  rt_strscat_rv64
+#define RT_SPAD   rt_strpad_rv64
 #elif __riscv_xlen == 32
 #define RT_SC_CPY rt_memcpy_rv32
 #define RT_SC_MOV rt_memmove_rv32
 #define RT_SC_SET rt_memset_rv32
 #define RT_SC_CMP rt_memcmp_rv32
+#define RT_SLEN   rt_strlen_rv32
+#define RT_SNLEN  rt_strnlen_rv32
+#define RT_SCPY   rt_strcpy_rv32
+#define RT_SNCPY  rt_strncpy_rv32
+#define RT_SCAT   rt_strcat_rv32
+#define RT_SNCAT  rt_strncat_rv32
+#define RT_SCMP   rt_strcmp_rv32
+#define RT_SNCMP  rt_strncmp_rv32
+#define RT_SCHR   rt_strchr_rv32
+#define RT_SRCHR  rt_strrchr_rv32
+#define RT_SSTR   rt_strstr_rv32
+#define RT_SPBRK  rt_strpbrk_rv32
+#define RT_SSCPY  rt_strscpy_rv32
+#define RT_SSCAT  rt_strscat_rv32
+#define RT_SPAD   rt_strpad_rv32
 #else
 #error riscv xlen
 #endif
@@ -822,10 +852,391 @@ static void test_scalar_mem(void)
     (void)id;
 }
 
+static void place_at(char *p, unsigned n, unsigned kind)
+{
+    unsigned i;
+
+    for (i = 0; i < n; i++) {
+        unsigned char c;
+
+        if (kind == 1)
+            c = 0x01;
+        else if (kind == 2)
+            c = (unsigned char)(0x80 + (i & 15));
+        else if (kind == 3)
+            c = 0xFF;
+        else
+            c = (unsigned char)(0x41 + (i & 15));
+        p[i] = (char)c;
+    }
+    if (kind == 0 && n > 4) {
+        p[1] = (char)0xFE;
+        p[n - 2] = (char)0xFE;
+    }
+    p[n] = 0;
+    for (i = 1; i <= 16; i++)
+        p[n + i] = (char)0x5A;
+}
+
+static char *ref_strcpy(char *d, const char *s)
+{
+    unsigned i = 0;
+
+    while ((d[i] = s[i]) != 0)
+        i++;
+    return d;
+}
+
+static char *ref_strncpy(char *d, const char *s, unsigned n)
+{
+    unsigned i = 0;
+
+    while (i < n && s[i] != 0) {
+        d[i] = s[i];
+        i++;
+    }
+    while (i < n)
+        d[i++] = 0;
+    return d;
+}
+
+static char *ref_strcat(char *d, const char *s)
+{
+    ref_strcpy(d + ref_strlen(d), s);
+    return d;
+}
+
+static char *ref_strncat(char *d, const char *s, unsigned n)
+{
+    unsigned u = ref_strlen(d);
+    unsigned i = 0;
+
+    while (i < n && s[i] != 0) {
+        d[u + i] = s[i];
+        i++;
+    }
+    d[u + i] = 0;
+    return d;
+}
+
+static void ref_strpad(char *d, const char *s, unsigned w, int fill)
+{
+    unsigned i = 0;
+    unsigned char uc = (unsigned char)fill;
+
+    while (i < w && s[i] != 0) {
+        d[i] = s[i];
+        i++;
+    }
+    while (i < w)
+        d[i++] = (char)uc;
+}
+
+static void put_prefix(char *d, unsigned pre)
+{
+    unsigned i;
+
+    for (i = 0; i < pre; i++)
+        d[i] = (char)('p' + i);
+    d[pre] = 0;
+}
+
+static void both_poison(void)
+{
+    poison((unsigned char *)g_d, STR, 0xA5);
+    poison((unsigned char *)g_e, STR, 0xA5);
+}
+
+/* id starts at 4000. Bytes after a NUL are 0x5A and must not match. */
+static unsigned check_strings(char *ab, char *bb, char *db, char *eb,
+                              unsigned n, unsigned al, unsigned bl,
+                              unsigned kind, unsigned id)
+{
+    char *a = ab + al;
+    char *b = bb + bl;
+    unsigned pre = al % 5;
+    unsigned pos[3];
+    unsigned np, pi;
+    unsigned limits[4];
+    unsigned li;
+    int needle;
+
+    if (al + n + 18 > 200 || bl + n + 24 > 200)
+        return id;
+    place_at(a, n, kind);
+    place_at(b, n, kind);
+    needle = (kind == 1) ? 0x01 : (kind == 2) ? 0x80 : (kind == 3) ? 0xFF : 'A';
+
+    expect(RT_SLEN(a) == n, id++);
+    expect(RT_SNLEN(a, 0) == 0, id++);
+    expect(RT_SNLEN(a, 1) == ref_strnlen(a, 1), id++);
+    expect(RT_SNLEN(a, n) == n, id++);
+    expect(RT_SNLEN(a, n + 9) == n, id++);
+    expect(RT_SCHR(a, needle) == ref_strchr(a, needle), id++);
+    expect(RT_SCHR(a, needle + 256) == ref_strchr(a, needle + 256), id++);
+    expect(RT_SCHR(a, 0) == a + n, id++);
+    expect(RT_SCHR(a, 256) == a + n, id++);
+    expect(RT_SCHR(a, 0x5A) == 0, id++);
+    expect(RT_SRCHR(a, needle) == ref_strrchr(a, needle), id++);
+    expect(RT_SRCHR(a, 0) == a + n, id++);
+    expect(RT_SRCHR(a, 0x5A) == 0, id++);
+    expect(RT_SSTR(a, "") == a, id++);
+    expect(RT_SSTR(a, "nope") == 0, id++);
+    expect(RT_SPBRK(a, "") == 0, id++);
+    expect(RT_SPBRK(a, "XYZ") == ref_strpbrk(a, "XYZ"), id++);
+    if (n > 0) {
+        char acc[2];
+        char nd[2];
+
+        acc[0] = a[n - 1];
+        acc[1] = 0;
+        nd[0] = a[0];
+        nd[1] = 0;
+        expect(RT_SPBRK(a, acc) == ref_strpbrk(a, acc), id++);
+        expect(RT_SSTR(a, nd) == a, id++);
+    }
+    if (n >= 4) {
+        char nd[4];
+
+        nd[0] = a[1];
+        nd[1] = a[2];
+        nd[2] = a[3];
+        nd[3] = 0;
+        expect(RT_SSTR(a, nd) == ref_strstr(a, nd), id++);
+    }
+
+    b[n + 1] = 0x11;
+    expect(RT_SCMP(a, b) == 0, id++);
+    b[n + 1] = (char)0x5A;
+    expect(RT_SCMP(a, b) == 0, id++);
+    expect(RT_SNCMP(a, b, 0) == 0, id++);
+    expect(RT_SNCMP(a, b, n) == 0, id++);
+    expect(RT_SNCMP(a, b, n + 4) == 0, id++);
+    if (n > 0) {
+        unsigned char sa = (unsigned char)a[0];
+        unsigned char sb = (unsigned char)b[0];
+
+        pos[0] = 0;
+        pos[1] = n - 1;
+        pos[2] = n / 2;
+        np = (n > 2) ? 3u : 1u;
+        for (pi = 0; pi < np; pi++) {
+            unsigned char old = (unsigned char)b[pos[pi]];
+            unsigned char nv = (unsigned char)(old ^ 0x01);
+
+            if (nv == 0)
+                nv = 0xFF;
+            b[pos[pi]] = (char)nv;
+            expect(RT_SCMP(a, b) == ref_strcmp(a, b), id++);
+            expect(RT_SNCMP(a, b, n) == ref_strncmp(a, b, n), id++);
+            b[pos[pi]] = (char)old;
+        }
+        a[0] = (char)0x80;
+        b[0] = (char)0x7F;
+        expect(RT_SCMP(a, b) == ref_strcmp(a, b), id++);
+        expect(RT_SCMP(a, b) > 0, id++);
+        a[0] = (char)sa;
+        b[0] = (char)sb;
+        a[n] = 'X';
+        a[n + 1] = 0;
+        b[n] = 'Y';
+        b[n + 1] = 0;
+        expect(RT_SNCMP(a, b, n) == 0, id++);
+        expect(RT_SNCMP(a, b, n + 1) == ref_strncmp(a, b, n + 1), id++);
+        a[n] = 0;
+        b[n] = 0;
+    }
+
+    both_poison();
+    expect(RT_SCPY(db + bl, a) == db + bl, id++);
+    ref_strcpy(eb + bl, a);
+    expect(bytes_eq(db, eb, 200), id++);
+
+    limits[0] = 0;
+    limits[1] = 1;
+    limits[2] = n;
+    limits[3] = n + 7;
+    for (li = 0; li < 4; li++) {
+        both_poison();
+        expect(RT_SNCPY(db + bl, a, limits[li]) == db + bl, id++);
+        ref_strncpy(eb + bl, a, limits[li]);
+        expect(bytes_eq(db, eb, 200), id++);
+    }
+
+    both_poison();
+    put_prefix(db + bl, pre);
+    put_prefix(eb + bl, pre);
+    expect(RT_SCAT(db + bl, a) == db + bl, id++);
+    ref_strcat(eb + bl, a);
+    expect(bytes_eq(db, eb, 200), id++);
+
+    limits[0] = 0;
+    limits[1] = 1;
+    limits[2] = n + 3;
+    for (li = 0; li < 3; li++) {
+        both_poison();
+        put_prefix(db + bl, pre);
+        put_prefix(eb + bl, pre);
+        expect(RT_SNCAT(db + bl, a, limits[li]) == db + bl, id++);
+        ref_strncat(eb + bl, a, limits[li]);
+        expect(bytes_eq(db, eb, 200), id++);
+    }
+
+    limits[0] = 0;
+    limits[1] = 1;
+    limits[2] = n;
+    limits[3] = n + 4;
+    for (li = 0; li < 4; li++) {
+        both_poison();
+        expect(RT_SSCPY(db + bl, a, limits[li]) ==
+               ref_strscpy(eb + bl, a, limits[li]), id++);
+        expect(bytes_eq(db, eb, 200), id++);
+    }
+
+    limits[0] = 0;
+    limits[1] = pre;
+    limits[2] = pre + n + 2;
+    for (li = 0; li < 3; li++) {
+        both_poison();
+        put_prefix(db + bl, pre);
+        put_prefix(eb + bl, pre);
+        expect(RT_SSCAT(db + bl, a, limits[li]) ==
+               ref_strscat(eb + bl, a, limits[li]), id++);
+        expect(bytes_eq(db, eb, 200), id++);
+    }
+
+    limits[0] = 0;
+    limits[1] = (n == 0) ? 1 : n;
+    limits[2] = n + 5;
+    for (li = 0; li < 3; li++) {
+        both_poison();
+        RT_SPAD(db + bl, a, limits[li], 0x1FF);
+        ref_strpad(eb + bl, a, limits[li], 0x1FF);
+        expect(bytes_eq(db, eb, 200), id++);
+        both_poison();
+        RT_SPAD(db + bl, a, limits[li], -1);
+        ref_strpad(eb + bl, a, limits[li], -1);
+        expect(bytes_eq(db, eb, 200), id++);
+    }
+    return id;
+}
+
+static void test_scalar_str(void)
+{
+    static const unsigned lens[] = {
+        0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63
+    };
+    static const unsigned offs[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 15 };
+    unsigned li, oi, kind, id;
+    char *ab = (char *)(((uintptr_t)g_s + 15u) & ~(uintptr_t)15u);
+    char *bb = ab + 240;
+    char *db = (char *)(((uintptr_t)g_d + 15u) & ~(uintptr_t)15u);
+    char *eb = (char *)(((uintptr_t)g_e + 15u) & ~(uintptr_t)15u);
+    char *wall = (char *)ram_end();
+    char *p;
+    unsigned i;
+
+    note("scalar str");
+    id = 4000;
+    for (li = 0; li < sizeof lens / sizeof lens[0]; li++) {
+        for (oi = 0; oi < sizeof offs / sizeof offs[0]; oi++) {
+            unsigned al = offs[oi];
+            unsigned bl = al ^ 1u;
+
+            id = check_strings(ab, bb, db, eb, lens[li], al, al, 0, id);
+            id = check_strings(ab, bb, db, eb, lens[li], al, bl, 0, id);
+        }
+    }
+    for (kind = 1; kind <= 3; kind++) {
+        static const unsigned few[] = { 0, 1, 3, 4, 8, 9, 16, 17 };
+        static const unsigned fo[] = { 0, 1, 3, 7 };
+
+        for (li = 0; li < sizeof few / sizeof few[0]; li++) {
+            for (oi = 0; oi < sizeof fo / sizeof fo[0]; oi++) {
+                id = check_strings(ab, bb, db, eb, few[li], fo[oi],
+                                   fo[oi], kind, id);
+                id = check_strings(ab, bb, db, eb, few[li], fo[oi],
+                                   fo[oi] ^ 1u, kind, id);
+            }
+        }
+    }
+
+    p = wall - 1;
+    poke((unsigned char *)p, 0);
+    expect(RT_SLEN(p) == 0, id++);
+    expect(RT_SNLEN(p, 0) == 0, id++);
+    expect(RT_SNLEN(wall, 0) == 0, id++);
+    expect(RT_SCHR(p, 0) == p, id++);
+    expect(RT_SCHR(p, 'a') == 0, id++);
+    expect(RT_SRCHR(p, 0) == p, id++);
+    expect(RT_SCMP(p, "") == 0, id++);
+    expect(RT_SNCMP(wall, wall, 0) == 0, id++);
+    expect(RT_SSTR(p, "") == p, id++);
+    expect(RT_SPBRK(p, "") == 0, id++);
+    both_poison();
+    RT_SPAD(g_d, wall, 0, 0x1FF);
+    expect((unsigned char)g_d[0] == 0xA5, id++);
+    g_d[0] = 'a';
+    g_d[1] = 'b';
+    g_d[2] = 0;
+    g_d[3] = (char)0xA5;
+    expect(RT_SNCAT(g_d, wall, 0) == g_d, id++);
+    expect(g_d[0] == 'a' && g_d[1] == 'b' && g_d[2] == 0, id++);
+    expect((unsigned char)g_d[3] == 0xA5, id++);
+
+    p = wall - 2;
+    poke((unsigned char *)p, 'Z');
+    poke((unsigned char *)(p + 1), 0);
+    expect(RT_SLEN(p) == 1, id++);
+    expect(RT_SCMP(p, "Z") == 0, id++);
+    expect(RT_SCHR(p, 'Z') == p, id++);
+    expect(RT_SCHR(p, 'Z' + 256) == p, id++);
+    expect(RT_SSTR(p, "Z") == p, id++);
+    expect(RT_SSTR(p, "ZZ") == 0, id++);
+    both_poison();
+    expect(RT_SSCPY(g_d, p, 0) == 1, id++);
+    expect((unsigned char)g_d[0] == 0xA5, id++);
+    both_poison();
+    expect(RT_SSCPY(g_d, p, 1) == 1, id++);
+    expect(g_d[0] == 0 && (unsigned char)g_d[1] == 0xA5, id++);
+    both_poison();
+    expect(RT_SCPY(g_d, p) == g_d && g_d[0] == 'Z' && g_d[1] == 0, id++);
+
+    p = wall - 5;
+    poke((unsigned char *)p, 'a');
+    poke((unsigned char *)(p + 1), 'b');
+    poke((unsigned char *)(p + 2), 'c');
+    poke((unsigned char *)(p + 3), 'd');
+    poke((unsigned char *)(p + 4), 0);
+    expect(RT_SLEN(p) == 4, id++);
+    expect(RT_SSTR(p, "bcd") == p + 1, id++);
+    expect(RT_SRCHR(p, 'b') == p + 1, id++);
+    expect(RT_SNLEN(p, 3) == 3, id++);
+    expect(RT_SNCMP(p, "abcz", 3) == 0, id++);
+    expect(RT_SNCMP(p, "abcz", 4) == ref_strncmp(p, "abcz", 4), id++);
+
+    p = wall - 9;
+    for (i = 0; i < 8; i++)
+        poke((unsigned char *)(p + i), 'Q');
+    poke((unsigned char *)(p + 8), 0);
+    expect(RT_SLEN(p) == 8, id++);
+    expect(RT_SNLEN(p, 100) == 8, id++);
+    expect(RT_SNLEN(p, 3) == 3, id++);
+    expect(RT_SCMP(p, "QQQQQQQQ") == 0, id++);
+    expect(RT_SCHR(p, 'Q') == p, id++);
+    expect(RT_SRCHR(p, 'Q') == p + 7, id++);
+    both_poison();
+    expect(RT_SCPY(g_d, p) == g_d, id++);
+    expect(RT_SLEN(g_d) == 8 && g_d[8] == 0, id++);
+    expect((unsigned char)g_d[9] == 0xA5, id++);
+    (void)id;
+}
+
 int rvv_main(void)
 {
     note("rvv start");
     test_scalar_mem();
+    test_scalar_str();
     test_mem();
     test_strlen_cmp();
     test_copy_find();

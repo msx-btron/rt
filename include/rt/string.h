@@ -49,6 +49,41 @@ size_t      rt_strscpy_rvv(char *dst, const char *src, size_t n);
 size_t      rt_strscat_rvv(char *dst, const char *src, size_t n);
 void        rt_strpad_rvv(char *dst, const char *src, size_t width, int fill);
 
+/* Integer RV32 and RV64, one object per XLEN. A word load is aligned,
+   so it stays inside one page. A word store contains no NUL.
+   Bounded calls stop at n. Do not link the two objects together. */
+size_t      rt_strlen_rv64(const char *s);
+size_t      rt_strnlen_rv64(const char *s, size_t n);
+char       *rt_strcpy_rv64(char *dst, const char *src);
+char       *rt_strncpy_rv64(char *dst, const char *src, size_t n);
+char       *rt_strcat_rv64(char *dst, const char *src);
+char       *rt_strncat_rv64(char *dst, const char *src, size_t n);
+int         rt_strcmp_rv64(const char *a, const char *b);
+int         rt_strncmp_rv64(const char *a, const char *b, size_t n);
+char       *rt_strchr_rv64(const char *s, int c);
+char       *rt_strrchr_rv64(const char *s, int c);
+char       *rt_strstr_rv64(const char *hay, const char *needle);
+char       *rt_strpbrk_rv64(const char *s, const char *accept);
+size_t      rt_strscpy_rv64(char *dst, const char *src, size_t n);
+size_t      rt_strscat_rv64(char *dst, const char *src, size_t n);
+void        rt_strpad_rv64(char *dst, const char *src, size_t width, int fill);
+
+size_t      rt_strlen_rv32(const char *s);
+size_t      rt_strnlen_rv32(const char *s, size_t n);
+char       *rt_strcpy_rv32(char *dst, const char *src);
+char       *rt_strncpy_rv32(char *dst, const char *src, size_t n);
+char       *rt_strcat_rv32(char *dst, const char *src);
+char       *rt_strncat_rv32(char *dst, const char *src, size_t n);
+int         rt_strcmp_rv32(const char *a, const char *b);
+int         rt_strncmp_rv32(const char *a, const char *b, size_t n);
+char       *rt_strchr_rv32(const char *s, int c);
+char       *rt_strrchr_rv32(const char *s, int c);
+char       *rt_strstr_rv32(const char *hay, const char *needle);
+char       *rt_strpbrk_rv32(const char *s, const char *accept);
+size_t      rt_strscpy_rv32(char *dst, const char *src, size_t n);
+size_t      rt_strscat_rv32(char *dst, const char *src, size_t n);
+void        rt_strpad_rv32(char *dst, const char *src, size_t width, int fill);
+
 /* R5900 LQ/SQ. A quad is stored only when it contains no NUL. */
 size_t      rt_strlen_ee(const char *s);
 size_t      rt_strnlen_ee(const char *s, size_t n);

@@ -1313,7 +1313,8 @@ static void run_strings(void)
     exercise_strings_misc();
 }
 
-#if (defined(__riscv) && (defined(RT_RUN_RVV) || defined(RT_RUN_SCALAR))) \
+#if (defined(__riscv) && (defined(RT_RUN_RVV) || defined(RT_RUN_SCALAR) \
+                          || defined(RT_RUN_RV))) \
     || (defined(__mips) && (defined(RT_RUN_SCALAR) || defined(RT_RUN_RCP) \
                             || defined(RT_RUN_EE)))
 /* One binary, one backend. RISC-V and MIPS share these rows. */
@@ -1368,6 +1369,44 @@ static void run_strings(void)
 #define RT_STRSCAT  rt_strscat_rcp
 #define RT_STRPAD   rt_strpad_rcp
 #define RT_BACKEND  "rcp"
+#elif defined(RT_RUN_RV)
+#if __riscv_xlen == 64
+#define RT_STRLEN   rt_strlen_rv64
+#define RT_STRNLEN  rt_strnlen_rv64
+#define RT_STRCPY   rt_strcpy_rv64
+#define RT_STRNCPY  rt_strncpy_rv64
+#define RT_STRCAT   rt_strcat_rv64
+#define RT_STRNCAT  rt_strncat_rv64
+#define RT_STRCMP   rt_strcmp_rv64
+#define RT_STRNCMP  rt_strncmp_rv64
+#define RT_STRCHR   rt_strchr_rv64
+#define RT_STRRCHR  rt_strrchr_rv64
+#define RT_STRSTR   rt_strstr_rv64
+#define RT_STRPBRK  rt_strpbrk_rv64
+#define RT_STRSCPY  rt_strscpy_rv64
+#define RT_STRSCAT  rt_strscat_rv64
+#define RT_STRPAD   rt_strpad_rv64
+#define RT_BACKEND  "rv64"
+#elif __riscv_xlen == 32
+#define RT_STRLEN   rt_strlen_rv32
+#define RT_STRNLEN  rt_strnlen_rv32
+#define RT_STRCPY   rt_strcpy_rv32
+#define RT_STRNCPY  rt_strncpy_rv32
+#define RT_STRCAT   rt_strcat_rv32
+#define RT_STRNCAT  rt_strncat_rv32
+#define RT_STRCMP   rt_strcmp_rv32
+#define RT_STRNCMP  rt_strncmp_rv32
+#define RT_STRCHR   rt_strchr_rv32
+#define RT_STRRCHR  rt_strrchr_rv32
+#define RT_STRSTR   rt_strstr_rv32
+#define RT_STRPBRK  rt_strpbrk_rv32
+#define RT_STRSCPY  rt_strscpy_rv32
+#define RT_STRSCAT  rt_strscat_rv32
+#define RT_STRPAD   rt_strpad_rv32
+#define RT_BACKEND  "rv32"
+#else
+#error riscv xlen
+#endif
 #else
 #define RT_STRLEN   rt_strlen
 #define RT_STRNLEN  rt_strnlen
@@ -2855,6 +2894,7 @@ int main(void)
 #else
 #error riscv xlen
 #endif
+    run_strings_riscv();
 #endif
 #elif defined(__mips)
 #if defined(RT_RUN_SCALAR)

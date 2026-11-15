@@ -1,7 +1,7 @@
 #!/bin/sh
 # Native rv64 host oracle for a physical RVV 1.0 machine.
 # Scalar C99 with vectorizers off, scalar C99 with vectorizers on,
-# the RVV assembly, then the integer rv64 memory assembly.
+# the RVV assembly, then the integer rv64 memory and string assembly.
 # The comparison libc is this machine's C library.
 # Nanoseconds are CLOCK_MONOTONIC on the board, not a QEMU guest clock.
 # QEMU stays in scripts/riscv.sh. Do not boot a guest from here.
@@ -182,8 +182,9 @@ cc_c "$OBJ/test_rv.o" verify/suite/test_host.c \
     -march=rv64gc -fno-vectorize -fno-slp-vectorize \
     -DRT_TABLE_RV -DRT_LIBC_NAME='"glibc"'
 as_c "$OBJ/mem_rv.o" src/riscv64/rv64/mem.s -march=rv64gc
+as_c "$OBJ/string_rv.o" src/riscv64/rv64/string.s -march=rv64gc
 link_bin "$OBJ/test_host_rv" \
-    "$OBJ/test_rv.o" "$OBJ/mem_rv.o"
+    "$OBJ/test_rv.o" "$OBJ/mem_rv.o" "$OBJ/string_rv.o"
 
 for sym in rt_memcpy_scalar rt_memmove_scalar rt_memset_scalar \
     rt_memcmp_scalar rt_strlen rt_strpad; do
@@ -194,16 +195,22 @@ reject_sym "$OBJ/test_host_scalar" rt_memcpy_rvv
 reject_sym "$OBJ/test_host_scalar_on" rt_memcpy_rvv
 reject_sym "$OBJ/test_host_scalar" rt_memcpy_rv64
 reject_sym "$OBJ/test_host_scalar_on" rt_memcpy_rv64
+reject_sym "$OBJ/test_host_scalar" rt_strlen_rv64
+reject_sym "$OBJ/test_host_scalar_on" rt_strlen_rv64
 for sym in rt_memcpy_rvv rt_memset_rvv rt_memcmp_rvv \
     rt_strlen_rvv rt_strpad_rvv; do
     need_sym "$OBJ/test_host_rvv" "$sym"
 done
 reject_sym "$OBJ/test_host_rvv" rt_memcpy_rv64
-for sym in rt_memcpy_rv64 rt_memmove_rv64 rt_memset_rv64 rt_memcmp_rv64; do
+reject_sym "$OBJ/test_host_rvv" rt_strlen_rv64
+for sym in rt_memcpy_rv64 rt_memmove_rv64 rt_memset_rv64 rt_memcmp_rv64 \
+    rt_strlen_rv64 rt_strcmp_rv64 rt_strchr_rv64 rt_strscpy_rv64 \
+    rt_strpad_rv64; do
     need_sym "$OBJ/test_host_rv" "$sym"
 done
 reject_sym "$OBJ/test_host_rv" rt_memcpy_rvv
 reject_sym "$OBJ/test_host_rv" rt_memcpy_scalar
+reject_sym "$OBJ/test_host_rv" rt_strlen_rvv
 
 : > "$LOG"
 run_table "scalar riscv64 glibc (vectorize off)" "$OBJ/test_host_scalar"
@@ -219,6 +226,6 @@ count_at_least "== backend: scalar ==" "$LOG" 2
 count_at_least "== backend: rvv ==" "$LOG" 1
 count_at_least "== backend: rv64 ==" "$LOG" 1
 count_at_least "| memmove " "$LOG" 3
-count_at_least "| strscpy          |      N/A |" "$LOG" 3
+count_at_least "| strscpy          |      N/A |" "$LOG" 4
 count_at_least "libc: glibc" "$LOG" 4
 echo "riscv-hw: scalar off, scalar on, RVV, and rv64 ok"

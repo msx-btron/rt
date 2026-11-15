@@ -148,7 +148,7 @@ jobs:
   # ------------------------------------------------------------------
   # Two guests, same script as `make riscv`. Each job is one XLEN:
   # freestanding contract, then scalar off, scalar on, RVV, and the
-  # integer rv32 or rv64 memory table.
+  # integer rv32 or rv64 memory and string table.
   # ------------------------------------------------------------------
   riscv-rvv32:
     name: RISC-V RVV32

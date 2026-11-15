@@ -10,6 +10,10 @@ Each RISC-V width prints four tables, in this order. The paste stops after the s
 
 3. RVV assembly. src/riscv32/rvv/ or src/riscv64/rvv/.
 
-4. Integer assembly. src/riscv32/rv32/mem.s or src/riscv64/rv64/mem.s, banner rv32 or rv64.
-   Memory rows only. On the RV32 guest that table was memcpy 0.85, memmove 0.76, memset 0.64, memcmp 3.26, 53234 checks, fail 0.
-   Those nanoseconds are the QEMU guest clock.
+4. Integer assembly. src/riscv32/rv32/ or src/riscv64/rv64/, banner rv32 or rv64.
+   mem.s is memcpy, memmove, memset, and memcmp.
+   string.s is strlen, strnlen, strcpy, strncpy, strcat, strncat, strcmp,
+   strncmp, strchr, strrchr, strstr, strpbrk, strscpy, strscat, and strpad.
+   strscpy, strscat, and strpad have no musl symbol, so those libc cells stay N/A.
+   A local musl boot of each width printed 56607 checks and fail 0.
+   Guest nanoseconds are the QEMU guest clock.
