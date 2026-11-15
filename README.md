@@ -4,16 +4,16 @@ Scalar Harts and SIMD Vector C Run-Time Library for RTOS [B-System](https://rt.b
 
 ## Vector Architectures (Assembly)
 
-* x86_32 MMX SSE 3DNow!
-* x86_64 SSE2 AVX AVX2 AVX-512
-* AArch32 NEON
-* AArch64 SVE
-* RISC-V RVV32
-* RISC-V RVV64
-* MIPS32
-* MIPS64
-* PPC32
-* PPC64
+* x86_32: MMX, SSE, 3DNow!
+* x86_64: SSE2, AVX, AVX2, AVX-512.
+* AArch32: ARM1176, Cortex-M0, Cortex-M55, NEON, Thumb-2.
+* AArch64: NEON, SVE, SME.
+* RISC-V: RVV32, RV32.
+* RISC-V: RVV64, RV64.
+* MIPS32: Boston, Magnum, Malta.
+* MIPS64: R5900, VR4300
+* PPC32: Mac G3, G4; IBM RS/6000.
+* PPC64: IBM Cell/BE.
 
 ## Scalar Architectures (C99)
 

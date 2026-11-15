@@ -23,6 +23,11 @@
                 The proved neon memset stays separate.
      rvv        RV32 or RV64 V, m8 e8 (one object per XLEN).
                 memcpy, memset, memcmp. memmove stays scalar.
+     rv32       RV32 integer. lw/sw only when both pointers are aligned.
+                memcpy, memmove, memset, memcmp. No vector opcodes.
+     rv64       RV64 integer. ld/sd only when both pointers are aligned.
+                memcpy, memmove, memset, memcmp. No vector opcodes.
+                Do not link the rv32 object with the rv64 object.
      ee         PlayStation 2 R5900. LQ/SQ and the MMI subset.
                 memcpy, memset, memcmp. memmove stays scalar.
      rcp        Nintendo 64 VR4300. ld/sd, not RSP microcode.
@@ -96,6 +101,16 @@ int   rt_memcmp_sme(const void *a, const void *b, size_t n);
 void *rt_memcpy_rvv(void *dst, const void *src, size_t n);
 void *rt_memset_rvv(void *dst, int c, size_t n);
 int   rt_memcmp_rvv(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_rv32(void *dst, const void *src, size_t n);
+void *rt_memmove_rv32(void *dst, const void *src, size_t n);
+void *rt_memset_rv32(void *dst, int c, size_t n);
+int   rt_memcmp_rv32(const void *a, const void *b, size_t n);
+
+void *rt_memcpy_rv64(void *dst, const void *src, size_t n);
+void *rt_memmove_rv64(void *dst, const void *src, size_t n);
+void *rt_memset_rv64(void *dst, int c, size_t n);
+int   rt_memcmp_rv64(const void *a, const void *b, size_t n);
 
 void *rt_memcpy_ee(void *dst, const void *src, size_t n);
 void *rt_memset_ee(void *dst, int c, size_t n);

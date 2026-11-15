@@ -1,4 +1,5 @@
-/* Contract checker for the RVV memory and string kernels.
+/* Contract checker for the RVV memory and string kernels, and for the
+   integer rv32/rv64 memory kernels linked beside them.
    No libc. QEMU virt runs it; a fault at the end of the 4MB RAM is a
    failed over-read. Guest time is not a result. */
 #include "rt/mem.h"
@@ -617,9 +618,214 @@ static void test_edge(void)
     expect(rt_strrchr_rvv((char *)p, 'b') == (char *)(p + 1), 1932);
 }
 
+#if __riscv_xlen == 64
+#define RT_SC_CPY rt_memcpy_rv64
+#define RT_SC_MOV rt_memmove_rv64
+#define RT_SC_SET rt_memset_rv64
+#define RT_SC_CMP rt_memcmp_rv64
+#elif __riscv_xlen == 32
+#define RT_SC_CPY rt_memcpy_rv32
+#define RT_SC_MOV rt_memmove_rv32
+#define RT_SC_SET rt_memset_rv32
+#define RT_SC_CMP rt_memcmp_rv32
+#else
+#error riscv xlen
+#endif
+
+static void ref_move(unsigned char *d, const unsigned char *s, unsigned n)
+{
+    unsigned i;
+
+    if (n == 0 || d == s)
+        return;
+    if (d < s) {
+        for (i = 0; i < n; i++)
+            d[i] = s[i];
+    } else {
+        i = n;
+        while (i > 0) {
+            i--;
+            d[i] = s[i];
+        }
+    }
+}
+
+static int ref_cmp(const unsigned char *a, const unsigned char *b, unsigned n)
+{
+    unsigned i;
+
+    for (i = 0; i < n; i++) {
+        if (a[i] != b[i])
+            return (int)a[i] - (int)b[i];
+    }
+    return 0;
+}
+
+static int filled(const unsigned char *p, unsigned n, unsigned char v)
+{
+    unsigned i;
+
+    for (i = 0; i < n; i++) {
+        if (p[i] != v)
+            return 0;
+    }
+    return 1;
+}
+
+static void test_scalar_mem(void)
+{
+    static const unsigned slens[] = {
+        0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+        63, 64, 65, 127, 128, 255
+    };
+    static const unsigned soffs[] = { 0, 1, 2, 3, 4, 7, 8, 9, 15 };
+    static const int fills[] = { 0, 0xA5, -1, 0x1A5 };
+    static const unsigned shifts[] = {
+        0, 1, 2, 3, 4, 7, 8, 9, 15, 16, 31, 32
+    };
+    unsigned li, od, os, i, n, d, s, id, si, sh, off, ln;
+    unsigned char *end = ram_end();
+    unsigned char *p;
+
+    note("scalar mem");
+    id = 3000;
+    for (li = 0; li < sizeof slens / sizeof slens[0]; li++) {
+        n = slens[li];
+        for (od = 0; od < sizeof soffs / sizeof soffs[0]; od++) {
+            for (os = 0; os < sizeof soffs / sizeof soffs[0]; os++) {
+                int fi;
+                unsigned ai;
+
+                d = soffs[od];
+                s = soffs[os];
+                if (d + n + 8 > MEM || s + n + 8 > MEM)
+                    continue;
+                for (i = 0; i < n; i++)
+                    g_c[i] = (unsigned char)(i * 3u + s + 1u);
+                for (i = 0; i < n; i++)
+                    g_b[s + i] = g_c[i];
+                poison(g_a, MEM, 0xCC);
+                expect(RT_SC_CPY(g_a + d, g_b + s, n) == g_a + d, id++);
+                expect(bytes_eq(g_a + d, g_c, n), id++);
+                expect(bytes_eq(g_b + s, g_c, n), id++);
+                expect(tail_is(g_a, 0, d, 0xCC), id++);
+                expect(tail_is(g_a, d + n, MEM, 0xCC), id++);
+
+                for (fi = 0; fi < 4; fi++) {
+                    unsigned char uc = (unsigned char)fills[fi];
+
+                    poison(g_a, MEM, 0xCC);
+                    expect(RT_SC_SET(g_a + d, fills[fi], n) == g_a + d, id++);
+                    expect(filled(g_a + d, n, uc), id++);
+                    expect(tail_is(g_a, 0, d, 0xCC), id++);
+                    expect(tail_is(g_a, d + n, MEM, 0xCC), id++);
+                }
+
+                poison(g_b, MEM, 0x11);
+                poison(g_c, MEM, 0x11);
+                for (i = 0; i < n; i++) {
+                    g_b[s + i] = (unsigned char)(i * 5u + 3u);
+                    g_c[s + i] = g_b[s + i];
+                }
+                expect(RT_SC_CMP(g_b + s, g_c + s, n) == 0, id++);
+                if (n == 0)
+                    continue;
+                for (ai = 0; ai < 4; ai++) {
+                    unsigned pos;
+                    unsigned char ob;
+
+                    if (ai == 0)
+                        pos = 0;
+                    else if (ai == 1)
+                        pos = n - 1;
+                    else if (ai == 2)
+                        pos = n > (unsigned)(__riscv_xlen / 8)
+                            ? (unsigned)(__riscv_xlen / 8) : 0;
+                    else
+                        pos = n > (unsigned)(__riscv_xlen / 8)
+                            ? (unsigned)(__riscv_xlen / 8) - 1u : 0;
+                    ob = g_b[s + pos];
+                    g_c[s + pos] = (unsigned char)(ob + 1u);
+                    expect(RT_SC_CMP(g_b + s, g_c + s, n) ==
+                           ref_cmp(g_b + s, g_c + s, n), id++);
+                    g_c[s + pos] = ob;
+                    g_b[s + pos] = 0x7F;
+                    g_c[s + pos] = 0x80;
+                    expect(RT_SC_CMP(g_b + s, g_c + s, n) ==
+                           ref_cmp(g_b + s, g_c + s, n), id++);
+                    expect(RT_SC_CMP(g_c + s, g_b + s, n) ==
+                           ref_cmp(g_c + s, g_b + s, n), id++);
+                    g_b[s + pos] = ob;
+                    g_c[s + pos] = ob;
+                }
+            }
+        }
+    }
+
+    for (li = 0; li < sizeof slens / sizeof slens[0]; li++) {
+        n = slens[li];
+        for (si = 0; si < sizeof shifts / sizeof shifts[0]; si++) {
+            sh = shifts[si];
+            if (sh + n + 4 > MEM)
+                continue;
+            for (i = 0; i < MEM; i++)
+                g_a[i] = g_b[i] = (unsigned char)(i * 13u + 9u);
+            expect(RT_SC_MOV(g_a + sh, g_a, n) == g_a + sh, id++);
+            ref_move(g_b + sh, g_b, n);
+            expect(bytes_eq(g_a, g_b, MEM), id++);
+
+            for (i = 0; i < MEM; i++)
+                g_a[i] = g_b[i] = (unsigned char)(i * 13u + 9u);
+            expect(RT_SC_MOV(g_a, g_a + sh, n) == g_a, id++);
+            ref_move(g_b, g_b + sh, n);
+            expect(bytes_eq(g_a, g_b, MEM), id++);
+        }
+    }
+    poison(g_a, MEM, 0x5A);
+    expect(RT_SC_MOV(g_a + 8, g_a + 8, 32) == g_a + 8, id++);
+    expect(tail_is(g_a, 0, MEM, 0x5A), id++);
+    poison(g_a, MEM, 0x5A);
+    expect(RT_SC_MOV(g_a + 3, g_a + 9, 0) == g_a + 3, id++);
+    expect(RT_SC_CPY(g_a, g_b, 0) == g_a, id++);
+    expect(RT_SC_SET(g_a, 0x7E, 0) == g_a, id++);
+    expect(RT_SC_CMP(g_a, g_b, 0) == 0, id++);
+    expect(tail_is(g_a, 0, MEM, 0x5A), id++);
+
+    expect(RT_SC_CPY(end, end, 0) == end, id++);
+    expect(RT_SC_SET(end, 1, 0) == end, id++);
+    expect(RT_SC_CMP(end, end, 0) == 0, id++);
+    expect(RT_SC_MOV(end, end, 0) == end, id++);
+    p = end - 32;
+    for (i = 0; i < 32; i++)
+        poke(p + i, (unsigned char)(0x40 + i));
+    for (off = 0; off < 8; off++) {
+        for (ln = 0; ln <= 24; ln += 8) {
+            if (off + ln > 32)
+                continue;
+            poison(g_a, 32, 0);
+            expect(RT_SC_CPY(g_a, p + off, ln) == g_a, id++);
+            expect(bytes_eq(g_a, p + off, ln), id++);
+            expect(RT_SC_CMP(g_a, p + off, ln) == 0, id++);
+        }
+    }
+    expect(RT_SC_SET(p, 0x5A, 32) == p, id++);
+    for (i = 0; i < 32; i++)
+        expect(peek(p + i) == 0x5A, id++);
+    for (i = 0; i < 32; i++)
+        poke(p + i, (unsigned char)i);
+    expect(RT_SC_MOV(p + 1, p, 16) == p + 1, id++);
+    expect(peek(p) == 0, id++);
+    for (i = 0; i < 16; i++)
+        expect(peek(p + 1 + i) == (unsigned char)i, id++);
+    expect(peek(p + 17) == 17, id++);
+    expect(peek(p + 31) == 31, id++);
+    (void)id;
+}
+
 int rvv_main(void)
 {
     note("rvv start");
+    test_scalar_mem();
     test_mem();
     test_strlen_cmp();
     test_copy_find();

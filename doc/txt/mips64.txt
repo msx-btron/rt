@@ -8,9 +8,9 @@ The two consoles do not share a vector ISA, so they do not share a kernel
 directory or a runner.
 
   src/mips64/R5900/ Emotion Engine. LQ/SQ and the MMI subset below.
-                    Local run is PCSX2. Ubuntu CI only assembles the file:
-                    Homebrew QEMU 11.0.3 and Ubuntu 24.04's QEMU have no
-                    R5900 CPU.
+                    PCSX2 runs the tables. Homebrew QEMU 11.0.3 and
+                    Ubuntu 24.04's QEMU have no R5900 CPU, so CI fetches
+                    the PCSX2 2.8.2 AppImage and uses the null GS renderer.
 
   src/mips64/VR4300/ VR4300. Aligned ld/sd, sixteen bytes a step, unrolled
                     to 64. This is the CPU a game calls. It is not RSP

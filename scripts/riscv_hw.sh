@@ -1,7 +1,8 @@
 #!/bin/sh
 # Native rv64 host oracle for a physical RVV 1.0 machine.
 # Scalar C99 with vectorizers off, scalar C99 with vectorizers on,
-# then the RVV assembly. The comparison libc is this machine's C library.
+# the RVV assembly, then the integer rv64 memory assembly.
+# The comparison libc is this machine's C library.
 # Nanoseconds are CLOCK_MONOTONIC on the board, not a QEMU guest clock.
 # QEMU stays in scripts/riscv.sh. Do not boot a guest from here.
 set -eu
@@ -176,6 +177,14 @@ as_c "$OBJ/string_rvv.o" src/riscv64/rvv/string.s -march=rv64gcv
 link_bin "$OBJ/test_host_rvv" \
     "$OBJ/test_rvv.o" "$OBJ/mem_rvv.o" "$OBJ/string_rvv.o"
 
+echo "riscv-hw: compile integer rv64"
+cc_c "$OBJ/test_rv.o" verify/suite/test_host.c \
+    -march=rv64gc -fno-vectorize -fno-slp-vectorize \
+    -DRT_TABLE_RV -DRT_LIBC_NAME='"glibc"'
+as_c "$OBJ/mem_rv.o" src/riscv64/rv64/mem.s -march=rv64gc
+link_bin "$OBJ/test_host_rv" \
+    "$OBJ/test_rv.o" "$OBJ/mem_rv.o"
+
 for sym in rt_memcpy_scalar rt_memmove_scalar rt_memset_scalar \
     rt_memcmp_scalar rt_strlen rt_strpad; do
     need_sym "$OBJ/test_host_scalar" "$sym"
@@ -183,22 +192,33 @@ for sym in rt_memcpy_scalar rt_memmove_scalar rt_memset_scalar \
 done
 reject_sym "$OBJ/test_host_scalar" rt_memcpy_rvv
 reject_sym "$OBJ/test_host_scalar_on" rt_memcpy_rvv
+reject_sym "$OBJ/test_host_scalar" rt_memcpy_rv64
+reject_sym "$OBJ/test_host_scalar_on" rt_memcpy_rv64
 for sym in rt_memcpy_rvv rt_memset_rvv rt_memcmp_rvv \
     rt_strlen_rvv rt_strpad_rvv; do
     need_sym "$OBJ/test_host_rvv" "$sym"
 done
+reject_sym "$OBJ/test_host_rvv" rt_memcpy_rv64
+for sym in rt_memcpy_rv64 rt_memmove_rv64 rt_memset_rv64 rt_memcmp_rv64; do
+    need_sym "$OBJ/test_host_rv" "$sym"
+done
+reject_sym "$OBJ/test_host_rv" rt_memcpy_rvv
+reject_sym "$OBJ/test_host_rv" rt_memcpy_scalar
 
 : > "$LOG"
 run_table "scalar riscv64 glibc (vectorize off)" "$OBJ/test_host_scalar"
 run_table "scalar riscv64 glibc (vectorize on)" "$OBJ/test_host_scalar_on"
 run_table "RVV64 glibc" "$OBJ/test_host_rvv"
+run_table "rv64 glibc" "$OBJ/test_host_rv"
 
 count_at_least "vectorize: off" "$LOG" 1
 count_at_least "vectorize: on" "$LOG" 1
 count_at_least "binary: rvv" "$LOG" 1
+count_at_least "binary: rv64" "$LOG" 1
 count_at_least "== backend: scalar ==" "$LOG" 2
 count_at_least "== backend: rvv ==" "$LOG" 1
-count_at_least "| memmove " "$LOG" 2
+count_at_least "== backend: rv64 ==" "$LOG" 1
+count_at_least "| memmove " "$LOG" 3
 count_at_least "| strscpy          |      N/A |" "$LOG" 3
-count_at_least "libc: glibc" "$LOG" 3
-echo "riscv-hw: scalar off, scalar on, and RVV ok"
+count_at_least "libc: glibc" "$LOG" 4
+echo "riscv-hw: scalar off, scalar on, RVV, and rv64 ok"

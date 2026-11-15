@@ -35,6 +35,8 @@
 #define RT_RUN_SIMD 1
 #elif defined(RT_TABLE_RVV)
 #define RT_RUN_RVV 1
+#elif defined(RT_TABLE_RV)
+#define RT_RUN_RV 1
 #elif defined(RT_TABLE_EE)
 #define RT_RUN_EE 1
 #elif defined(RT_TABLE_RCP)
@@ -2716,6 +2718,8 @@ int main(void)
     printf("binary: simd\n");
 #elif defined(RT_TABLE_RVV)
     printf("binary: rvv\n");
+#elif defined(RT_TABLE_RV)
+    printf("binary: rv%u\n", (unsigned)__riscv_xlen);
 #elif defined(RT_TABLE_EE)
     printf("binary: ee\n");
 #elif defined(RT_TABLE_RCP)
@@ -2840,6 +2844,17 @@ int main(void)
 #if defined(RT_RUN_RVV)
     run_mem_backend("rvv", rt_memcpy_rvv, 0, rt_memset_rvv, rt_memcmp_rvv);
     run_strings_riscv();
+#endif
+#if defined(RT_RUN_RV)
+#if __riscv_xlen == 64
+    run_mem_backend("rv64", rt_memcpy_rv64, rt_memmove_rv64,
+                    rt_memset_rv64, rt_memcmp_rv64);
+#elif __riscv_xlen == 32
+    run_mem_backend("rv32", rt_memcpy_rv32, rt_memmove_rv32,
+                    rt_memset_rv32, rt_memcmp_rv32);
+#else
+#error riscv xlen
+#endif
 #endif
 #elif defined(__mips)
 #if defined(RT_RUN_SCALAR)

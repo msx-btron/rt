@@ -1,0 +1,15 @@
+Each RISC-V width prints four tables, in this order. The paste stops after the second.
+
+1. Scalar, vectorize off. src/common/scalar/, compiled -march=rv32gc -fno-vectorize.
+   The C copies aligned size_t words (lw/sw on RV32, ld/sd on RV64).
+   That is the first table, the one that ends at scalar32_off_exit:0.
+
+2. Scalar, vectorize on. The same files, with -march=rv32gcv and -DRT_VECTORIZE.
+   The word loops are compiled out and Clang emits RVV (vsetvli, vle8.v, vse8.v).
+   The build rejects this object if those opcodes are missing.
+
+3. RVV assembly. src/riscv32/rvv/ or src/riscv64/rvv/.
+
+4. Integer assembly. src/riscv32/rv32/mem.s or src/riscv64/rv64/mem.s, banner rv32 or rv64.
+   Memory rows only. On the RV32 guest that table was memcpy 0.85, memmove 0.76, memset 0.64, memcmp 3.26, 53234 checks, fail 0.
+   Those nanoseconds are the QEMU guest clock.

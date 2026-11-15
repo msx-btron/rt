@@ -2,8 +2,8 @@
 # PlayStation 2 and Nintendo 64 kernel check.
 #   auto (make mips): PCSX2 for the Emotion Engine tiers, and
 #     qemu-system-mips64el -M malta -cpu R4000 for the VR4300 tiers.
-#   ee:  assemble src/mips64/R5900. PCSX2 is the EE runtime. This QEMU
-#     has no R5900 on the 11.0.3 line.
+#   ee:  PCSX2 runs the three Emotion Engine tables. QEMU has no
+#     R5900 on the 11.0.3 line, so CI fetches the PCSX2 2.8.2 AppImage.
 #   rcp: scalar C99 (vectorizers off), scalar C99 (vectorizers on),
 #     and the handwritten VR4300 kernels, on Malta.
 # PCSX2 Count and Malta CP0 Count are emulator clocks. They do not
@@ -87,10 +87,10 @@ as_n64() {
     src=$3
     if [ -n "$CLANG" ]; then
         "$CLANG" -target mips64el-unknown-elf -march=mips64 -mabi=64 \
-            -msoft-float -mno-abicalls \
+            -msoft-float -mno-abicalls -w \
             -c -o "$out" -Wa,-I,"$inc" "$src"
     else
-        "$GCC" -march=mips64 -mabi=64 -msoft-float -mno-abicalls \
+        "$GCC" -march=mips64 -mabi=64 -msoft-float -mno-abicalls -w \
             -c -o "$out" -Wa,-I,"$inc" "$src"
     fi
 }
@@ -144,20 +144,6 @@ if [ "$mode" = "auto" ] || [ "$mode" = "ee" ]; then
 fi
 if [ "$mode" = "auto" ] || [ "$mode" = "rcp" ]; then
     assemble_pair rcp n64
-fi
-
-if [ "$mode" = "ee" ]; then
-    cpuhelp=""
-    if have qemu-system-mips64el; then
-        cpuhelp=$(qemu-system-mips64el -cpu help 2>&1 || true)
-    fi
-    if printf '%s\n' "$cpuhelp" | grep -q R5900; then
-        echo "mips: this QEMU lists R5900. No freestanding system loader is wired."
-        echo "mips: EE runtime on this machine is PCSX2. Assemble-check passed."
-    else
-        echo "mips: QEMU has no R5900 CPU. EE assemble-check passed."
-    fi
-    exit 0
 fi
 
 ran=0
@@ -283,6 +269,9 @@ banner() {
 OPENPS2_URL=https://github.com/TamaribaEmu/OpenPS2BIOS/releases/download/v0.6/OpenPS2BIOS-0.6.bin
 OPENPS2_SHA=3702baa508ff40498fab4a95429a2ae1f903d11f5bbcdd4e1a87dbe9f5d21a84
 OPENPS2_NAME=OpenPS2BIOS-0.6.bin
+PCSX2_URL=https://github.com/PCSX2/pcsx2/releases/download/v2.8.2/pcsx2-v2.8.2-linux-appimage-x64-Qt.AppImage
+PCSX2_SHA=0c46bb6a88aa2782b10853a7b07cf3387ba99cbef2b966372cd2315b8571abea
+PCSX2_IMG=pcsx2-v2.8.2-linux-appimage-x64-Qt.AppImage
 
 sha256_file() {
     if have sha256sum; then
@@ -320,12 +309,58 @@ fetch_openps2bios() {
     printf '%s\n' "$dest"
 }
 
+resolve_pcsx2() {
+    if [ -n "${PCSX2_BIN:-}" ] && [ -x "$PCSX2_BIN" ]; then
+        printf '%s\n' "$PCSX2_BIN"
+        return 0
+    fi
+    mac=/Applications/PCSX2.app/Contents/MacOS/PCSX2
+    if [ -x "$mac" ]; then
+        printf '%s\n' "$mac"
+        return 0
+    fi
+    if [ "$(uname -s)" != "Linux" ]; then
+        return 1
+    fi
+    img=$OBJ/$PCSX2_IMG
+    if [ ! -f "$img" ] || [ "$(sha256_file "$img")" != "$PCSX2_SHA" ]; then
+        if ! have curl; then
+            echo "mips: curl is required to fetch PCSX2" >&2
+            return 1
+        fi
+        echo "mips: fetch PCSX2 2.8.2 AppImage"
+        curl -fL --retry 3 --retry-delay 2 -o "$img.partial" "$PCSX2_URL"
+        if [ "$(sha256_file "$img.partial")" != "$PCSX2_SHA" ]; then
+            echo "mips: PCSX2 checksum mismatch" >&2
+            rm -f "$img.partial"
+            return 1
+        fi
+        mv "$img.partial" "$img"
+        chmod +x "$img"
+    fi
+    root=$OBJ/pcsx2-v2.8.2
+    if [ ! -x "$root/AppRun" ]; then
+        rm -rf "$root" "$OBJ/squashfs-root"
+        ( cd "$OBJ" && "$img" --appimage-extract >/dev/null )
+        if [ ! -d "$OBJ/squashfs-root" ]; then
+            echo "mips: PCSX2 AppImage did not extract" >&2
+            return 1
+        fi
+        mv "$OBJ/squashfs-root" "$root"
+    fi
+    if [ ! -x "$root/AppRun" ]; then
+        echo "mips: PCSX2 AppImage has no AppRun" >&2
+        return 1
+    fi
+    printf '%s\n' "$root/AppRun"
+}
+
 run_pcsx2() {
     name=$1
     elf=$2
-    pcsx2=${PCSX2_BIN:-/Applications/PCSX2.app/Contents/MacOS/PCSX2}
-    if [ ! -x "$pcsx2" ]; then
-        echo "mips: PCSX2 not found at $pcsx2" >&2
+    pcsx2=${PCSX2_BIN:-}
+    if [ -z "$pcsx2" ] || [ ! -x "$pcsx2" ]; then
+        echo "mips: PCSX2 not found" >&2
         exit 1
     fi
     bios=$(fetch_openps2bios)
@@ -359,11 +394,25 @@ EnableTimestamps = true
 EnableEEConsole = true
 EnableIOPConsole = true
 EOF
+    if [ "$(uname -s)" = "Linux" ]; then
+        cat >> "$data/PCSX2/inis/PCSX2.ini" << 'EOF'
+
+[EmuCore/GS]
+Renderer = 11
+EOF
+    fi
     : > "$log"
     banner "$name"
-    "$pcsx2" -nogui -batch -fastboot -nofullscreen -earlyconsolelog \
-        -logfile "$log" -datapath "$data" "$real" >/dev/null 2>"$OBJ/$name.err" &
-    wait_guest "$name" "$!" "$log" 180
+    if [ "$(uname -s)" = "Linux" ] && [ -z "${DISPLAY:-}" ] && have xvfb-run; then
+        xvfb-run -a "$pcsx2" -nogui -batch -fastboot -nofullscreen \
+            -earlyconsolelog -logfile "$log" -datapath "$data" "$real" \
+            >/dev/null 2>"$OBJ/$name.err" &
+    else
+        "$pcsx2" -nogui -batch -fastboot -nofullscreen -earlyconsolelog \
+            -logfile "$log" -datapath "$data" "$real" \
+            >/dev/null 2>"$OBJ/$name.err" &
+    fi
+    wait_guest "$name" "$!" "$log" 300
     rm -rf "$data"
 }
 
@@ -378,11 +427,14 @@ run_malta() {
     wait_guest "$name" "$!" "$log" 300
 }
 
-if [ "$mode" = "auto" ] && [ -x "${PCSX2_BIN:-/Applications/PCSX2.app/Contents/MacOS/PCSX2}" ]; then
+if [ "$mode" = "auto" ] || [ "$mode" = "ee" ]; then
+    pcsx2_bin=$(resolve_pcsx2 || true)
+    if [ -n "$pcsx2_bin" ]; then
     if [ -z "$CLANG" ] || [ -z "$LD" ]; then
         echo "mips: PCSX2 is present but the o32 clang or mipsel linker is not" >&2
         exit 1
     fi
+    PCSX2_BIN=$pcsx2_bin
     echo "mips: PCSX2 Count is the emulator clock, not 294.912 MHz"
     "$CLANG" -target mipsel-unknown-elf -march=mips64 -mabi=32 -msoft-float \
         -c -o "$OBJ/start.o" verify/suite/ps2_start.s
@@ -409,6 +461,10 @@ if [ "$mode" = "auto" ] && [ -x "${PCSX2_BIN:-/Applications/PCSX2.app/Contents/M
     run_pcsx2 scalar-on "$OBJ/scalar-on.elf"
     run_pcsx2 ee "$OBJ/ee.elf"
     ran=1
+    elif [ "$mode" = "ee" ]; then
+        echo "mips: EE tables need PCSX2" >&2
+        exit 1
+    fi
 fi
 
 if [ "$mode" = "rcp" ] || [ "$mode" = "auto" ]; then

@@ -147,7 +147,8 @@ jobs:
 
   # ------------------------------------------------------------------
   # Two guests, same script as `make riscv`. Each job is one XLEN:
-  # freestanding contract, then scalar off, scalar on, and RVV.
+  # freestanding contract, then scalar off, scalar on, RVV, and the
+  # integer rv32 or rv64 memory table.
   # ------------------------------------------------------------------
   riscv-rvv32:
     name: RISC-V RVV32
@@ -232,7 +233,7 @@ jobs:
   # ------------------------------------------------------------------
   # Nintendo 64 stand-in: qemu-system -M malta -cpu R4000.
   # Scalar C99 off, scalar C99 on, and the VR4300 ld/sd kernels.
-  # PlayStation 2: assemble src/mips64/R5900. Ubuntu 24.04's QEMU has no R5900.
+  # PlayStation 2: PCSX2 2.8.2. Ubuntu 24.04's QEMU has no R5900.
   # ------------------------------------------------------------------
   mips-rcp:
     name: MIPS64 RCP
@@ -252,12 +253,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install the mips64el assembler and QEMU system
+      - name: Install clang, the mipsel linker, and a headless display
         run: |
           sudo apt-get update -qq
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            gcc-13-mips64el-linux-gnuabi64 qemu-system-mips
-      - name: PlayStation 2 assemble-check
+            clang lld binutils-mipsel-linux-gnu \
+            gcc-13-mips64el-linux-gnuabi64 \
+            curl ca-certificates xvfb libfuse2
+      - name: PlayStation 2 tables
         run: sh scripts/mips64.sh ee
 
   # ------------------------------------------------------------------

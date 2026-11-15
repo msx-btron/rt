@@ -2,8 +2,9 @@
 # RVV32 and RVV64 freestanding contracts, then two musl guests.
 # rv32: Bootlin 2026.08 ilp32d. rv64: Alpine 3.24.4.
 # Each guest runs scalar C99 with vectorizers off, scalar C99 with
-# vectorizers on, and the RVV assembly. Guest nanoseconds are the
-# guest clock, not a silicon result.
+# vectorizers on, the RVV assembly, and the integer rv32 or rv64
+# memory assembly. Guest nanoseconds are the guest clock, not a
+# silicon result.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -62,11 +63,15 @@ compile_width() {
     "$CC" "$@" -c -o build/rvv${xlen}-start.o verify/suite/rvv_start.s
     "$CC" "$@" -c -o build/rvv${xlen}-mem.o src/riscv${xlen}/rvv/mem.s
     "$CC" "$@" -c -o build/rvv${xlen}-string.o src/riscv${xlen}/rvv/string.s
+    # Integer march. A vector opcode in this file fails the assemble.
+    set -- -target "$target" -march=rv${xlen}gc -mabi="$abi"
+    "$CC" "$@" -c -o build/rv${xlen}-mem.o src/riscv${xlen}/rv${xlen}/mem.s
     set -- $cflags
     "$CC" "$@" -c -o build/rvv${xlen}-test.o verify/suite/test_rvv.c
     "$LD" -m elf${xlen}lriscv -z max-page-size=4096 -T verify/suite/rvv.ld -o "$elf" \
         build/rvv${xlen}-start.o build/rvv${xlen}-mem.o \
-        build/rvv${xlen}-string.o build/rvv${xlen}-test.o
+        build/rvv${xlen}-string.o build/rv${xlen}-mem.o \
+        build/rvv${xlen}-test.o
 }
 
 run_width() {
@@ -485,6 +490,16 @@ EOF
     link_one "$g_obj/test_host_rvv" \
         "$g_obj/test_rvv.o" "$g_obj/mem_rvv.o" "$g_obj/string_rvv.o"
 
+    echo "riscv: compile integer rv${g_xlen}"
+    # shellcheck disable=SC2086
+    "$CC" -target "$target" -march=rv${g_xlen}gc -mabi="$g_abi" $off \
+        -DRT_TABLE_RV \
+        -c -o "$g_obj/test_rv.o" verify/suite/test_host.c
+    "$CC" -target "$target" -march=rv${g_xlen}gc -mabi="$g_abi" \
+        -c -o "$g_obj/mem_rv.o" src/riscv${g_xlen}/rv${g_xlen}/mem.s
+    link_one "$g_obj/test_host_rv" \
+        "$g_obj/test_rv.o" "$g_obj/mem_rv.o"
+
     for sym in rt_memcpy_scalar rt_memmove_scalar rt_memset_scalar \
         rt_memcmp_scalar rt_strlen rt_strpad; do
         need_sym "$g_obj/test_host_scalar" "$sym"
@@ -492,16 +507,28 @@ EOF
     done
     reject_sym "$g_obj/test_host_scalar" rt_memcpy_rvv
     reject_sym "$g_obj/test_host_scalar_on" rt_memcpy_rvv
+    reject_sym "$g_obj/test_host_scalar" "rt_memcpy_rv${g_xlen}"
+    reject_sym "$g_obj/test_host_scalar_on" "rt_memcpy_rv${g_xlen}"
     for sym in rt_memcpy_rvv rt_memset_rvv rt_memcmp_rvv \
         rt_strlen_rvv rt_strpad_rvv; do
         need_sym "$g_obj/test_host_rvv" "$sym"
     done
+    reject_sym "$g_obj/test_host_rvv" "rt_memcpy_rv${g_xlen}"
+    for sym in rt_memcpy_rv${g_xlen} rt_memmove_rv${g_xlen} \
+        rt_memset_rv${g_xlen} rt_memcmp_rv${g_xlen}; do
+        need_sym "$g_obj/test_host_rv" "$sym"
+    done
+    reject_sym "$g_obj/test_host_rv" rt_memcpy_rvv
+    reject_sym "$g_obj/test_host_rv" rt_memcpy_scalar
+    reject_sym "$g_obj/test_host_rv" rt_strlen_rvv
 
     cp -f "$g_obj/test_host_scalar" "$g_root/rt/test_host_scalar"
     cp -f "$g_obj/test_host_scalar_on" "$g_root/rt/test_host_scalar_on"
     cp -f "$g_obj/test_host_rvv" "$g_root/rt/test_host_rvv"
+    cp -f "$g_obj/test_host_rv" "$g_root/rt/test_host_rv"
     chmod 755 "$g_root/rt/test_host_scalar" \
-        "$g_root/rt/test_host_scalar_on" "$g_root/rt/test_host_rvv"
+        "$g_root/rt/test_host_scalar_on" "$g_root/rt/test_host_rvv" \
+        "$g_root/rt/test_host_rv"
     cat > "$g_root/init" <<EOF
 #!/bin/sh
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
@@ -519,6 +546,9 @@ echo "scalar${g_xlen}_on_exit:\$?"
 echo "======== RVV${g_xlen} ${g_libc} ========"
 /rt/test_host_rvv
 echo "rvv${g_xlen}_exit:\$?"
+echo "======== rv${g_xlen} ${g_libc} ========"
+/rt/test_host_rv
+echo "rv${g_xlen}_asm_exit:\$?"
 sleep 1
 if [ -x /sbin/poweroff ]; then
     /sbin/poweroff -f
@@ -586,16 +616,19 @@ EOF
     need_exit "scalar${g_xlen}_off_exit" "$g_log"
     need_exit "scalar${g_xlen}_on_exit" "$g_log"
     need_exit "rvv${g_xlen}_exit" "$g_log"
+    need_exit "rv${g_xlen}_asm_exit" "$g_log"
     count_at_least "vectorize: off" "$g_log" 1
     count_at_least "vectorize: on" "$g_log" 1
     count_at_least "== backend: scalar ==" "$g_log" 2
     count_at_least "== backend: rvv ==" "$g_log" 1
-    count_at_least "| memmove " "$g_log" 2
+    count_at_least "== backend: rv${g_xlen} ==" "$g_log" 1
+    count_at_least "| memmove " "$g_log" 3
     count_at_least "| strscpy          |      N/A |" "$g_log" 3
     count_at_least "scalar riscv${g_xlen} ${g_libc} (vectorize off)" "$g_log" 1
     count_at_least "scalar riscv${g_xlen} ${g_libc} (vectorize on)" "$g_log" 1
     count_at_least "RVV${g_xlen} ${g_libc}" "$g_log" 1
-    echo "riscv: riscv${g_xlen} scalar off, scalar on, and RVV ok"
+    count_at_least "rv${g_xlen} ${g_libc}" "$g_log" 1
+    echo "riscv: riscv${g_xlen} scalar off, scalar on, RVV, and rv${g_xlen} ok"
 }
 
 run_one() {
@@ -626,7 +659,7 @@ case "${1:-both}" in
 both)
     run_one 64
     run_one 32
-    echo "riscv: rv32 Bootlin musl and rv64 Alpine musl: scalar off, scalar on, and RVV ok"
+    echo "riscv: rv32 Bootlin musl and rv64 Alpine musl: scalar off, scalar on, RVV, and integer memory ok"
     ;;
 64|rv64)
     run_one 64
